@@ -1,0 +1,273 @@
+# Architecture
+
+## Architectural style
+
+Switchboard begins as a **modular monolith with a separate background worker**. This provides strong transactional boundaries and simple local operation while preserving modules that could later become independently deployed control-plane or data-plane services.
+
+LangGraph is an orchestration adapter. Switchboard owns the public execution model, state machine, persistence, APIs, and guarantees.
+
+## System context
+
+```mermaid
+flowchart LR
+    U[End User] --> C[Product Chat Client]
+    D[Product Developer] --> CP[Switchboard Control APIs]
+    T[Tool Developer] --> CP
+    O[Platform Operator] --> CP
+    C --> DP[Switchboard Conversation API]
+    DP --> LLM[Model Provider]
+    DP --> EXT[Registered Product Tools]
+    CP --> DP
+```
+
+## Container view
+
+```mermaid
+flowchart TB
+    Client[Product Client] -->|HTTPS / SSE| API[Switchboard API]
+    API --> PG[(PostgreSQL)]
+    API --> Redis[(Redis)]
+    API --> Outbox[Transactional Outbox]
+    Worker[Switchboard Worker] --> PG
+    Worker --> Redis
+    Worker --> Model[Model Gateway]
+    Worker --> Tools[Tool Adapters / External APIs]
+    Eval[Eval Runner] --> PG
+    Eval --> Model
+    Release[Rollout Simulator] --> API
+    Release --> PG
+```
+
+## Control plane and data plane
+
+### Control plane
+
+- agent and tool registration;
+- policy configuration;
+- eval dataset and evaluator management;
+- release creation and rollout transitions;
+- disabling unhealthy tools;
+- inspection and audit APIs.
+
+### Data plane
+
+- accept conversation turns;
+- persist and dispatch work;
+- load context;
+- route tools;
+- evaluate policies;
+- wait for approval;
+- invoke tools;
+- call models;
+- stream committed events;
+- recover from retries and failure.
+
+They initially share one codebase and database but have separate modules and contracts.
+
+## Proposed modules
+
+```text
+src/switchboard/
+├── domain/
+│   ├── agents/
+│   ├── conversations/
+│   ├── execution/
+│   ├── tools/
+│   ├── policies/
+│   ├── evaluation/
+│   └── releases/
+├── application/
+│   ├── commands/
+│   ├── queries/
+│   ├── ports/
+│   └── services/
+├── adapters/
+│   ├── api/
+│   ├── persistence/
+│   ├── orchestration/
+│   ├── models/
+│   ├── tools/
+│   ├── streaming/
+│   └── telemetry/
+├── workers/
+└── bootstrap/
+```
+
+## Runtime turn flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant DB as PostgreSQL
+    participant Worker
+    participant Router
+    participant Policy
+    participant Tool
+    participant Model
+
+    Client->>API: POST conversation turn
+    API->>DB: message + turn + outbox (one transaction)
+    API-->>Client: 202 Accepted + turn ID
+    Worker->>DB: claim outbox / turn
+    Worker->>DB: append ROUTING event
+    Worker->>Router: select eligible tool or fallback
+    Router-->>Worker: structured routing decision
+    Worker->>Policy: evaluate action
+    alt confirmation required
+        Worker->>DB: persist approval request and pause
+        API-->>Client: SSE approval.required
+        Client->>API: approve request
+        API->>DB: persist approval and dispatch resume
+    end
+    Worker->>Tool: invoke with stable idempotency key
+    Tool-->>Worker: structured result
+    Worker->>Model: generate final response
+    Model-->>Worker: streamed tokens/events
+    Worker->>DB: persist committed events and completion
+    API-->>Client: SSE committed events
+```
+
+## Durable dispatch
+
+The API transaction commits:
+
+1. user message;
+2. `TurnExecution` in `RECEIVED`;
+3. initial execution event;
+4. outbox record.
+
+The worker claims outbox records and advances the state machine. This avoids a committed turn being lost between database commit and in-memory scheduling.
+
+## Execution state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> RECEIVED
+    RECEIVED --> ROUTING
+    ROUTING --> NEEDS_CLARIFICATION
+    ROUTING --> AWAITING_CONFIRMATION
+    ROUTING --> READY
+    NEEDS_CLARIFICATION --> COMPLETED
+    AWAITING_CONFIRMATION --> READY: approved
+    AWAITING_CONFIRMATION --> CANCELLED: rejected/expired
+    READY --> EXECUTING_TOOL
+    EXECUTING_TOOL --> GENERATING_RESPONSE
+    EXECUTING_TOOL --> UNKNOWN_OUTCOME
+    EXECUTING_TOOL --> FAILED
+    UNKNOWN_OUTCOME --> GENERATING_RESPONSE: reconciled success
+    UNKNOWN_OUTCOME --> READY: reconciled safe retry
+    UNKNOWN_OUTCOME --> FAILED: terminal review
+    GENERATING_RESPONSE --> COMPLETED
+    RECEIVED --> CANCELLED
+    ROUTING --> FAILED
+    GENERATING_RESPONSE --> FAILED
+```
+
+Not every turn calls a tool. A direct-response path may move from routing to generation.
+
+## Tool-routing pipeline
+
+```mermaid
+flowchart LR
+    Registry[Active bound tools] --> Auth[Authorization filter]
+    Auth --> Health[Availability filter]
+    Health --> Retrieve[Embedding candidate retrieval]
+    Retrieve --> Select[Structured final selection]
+    Select --> Outcome{Outcome}
+    Outcome -->|Selected| Policy[Policy evaluation]
+    Outcome -->|Ambiguous| Clarify[Clarifying question]
+    Outcome -->|No match| Fallback[Fallback response]
+    Outcome -->|Unavailable| Explain[Availability fallback]
+```
+
+## Policy boundary
+
+The policy engine receives a complete request context and returns one of:
+
+- `ALLOW`;
+- `DENY`;
+- `REQUIRE_CONFIRMATION`;
+- `REQUIRE_ELEVATED_APPROVAL`.
+
+The executor never bypasses the policy result. Approvals are separate durable records with actor, scope, expiration, and argument fingerprint.
+
+## Tool execution contract
+
+Each invocation includes:
+
+- immutable tool version;
+- validated arguments;
+- stable logical invocation ID and idempotency key;
+- caller identity and delegated scopes;
+- timeout and retry policy;
+- trace context.
+
+Each result maps to a platform error taxonomy. A timeout after dispatch of a mutation may become `UNKNOWN_OUTCOME`; it is not blindly retried.
+
+## Streaming model
+
+SSE is used initially because the primary direction is server-to-client event delivery. Events have monotonically increasing turn-local sequence numbers. A reconnecting client supplies `Last-Event-ID`; the API replays committed events and then follows new events.
+
+Generated tokens may be buffered into durable chunks rather than committing every token individually. The exact batching policy will be benchmarked and documented.
+
+## Persistence ownership
+
+- PostgreSQL: source of truth for configuration, conversation, execution, approval, audit, eval, and release state.
+- Redis: ephemeral cache, rate-limit counters, leases, and connection coordination.
+- Object storage: deferred; may later hold large eval artifacts or traces.
+
+## Evaluation architecture
+
+Offline evaluation is a control-plane job. It pins versions, runs deterministic checks first, optionally runs a calibrated judge, writes case-level results, compares against a baseline, and emits a pass/fail release decision.
+
+Live rollout protection consumes operational signals. It does not rerun the entire offline golden dataset on every production turn.
+
+## Deployment
+
+Initial Docker Compose services:
+
+```text
+switchboard-api
+switchboard-worker
+postgres
+redis
+eval-runner
+rollout-simulator
+```
+
+The API and worker use the same application/domain packages but different entry points.
+
+## Scaling path
+
+Only when measurement justifies it:
+
+1. scale workers horizontally with database-backed claiming;
+2. separate eval workloads from conversation workers;
+3. move durable dispatch to a managed queue while preserving outbox semantics;
+4. isolate control-plane APIs;
+5. partition high-volume execution-event storage;
+6. introduce multi-region ownership rules.
+
+No microservice split is required merely to demonstrate seniority.
+
+
+## Implementation status after Day 2
+
+Implemented:
+
+- one repository with separate API and worker entry points;
+- inward domain/application/adapters/bootstrap dependency direction;
+- FastAPI health and readiness endpoints;
+- PostgreSQL and Redis runtime resources;
+- SQLAlchemy Core persistence, Alembic, repository ports, and unit of work;
+- durable versioned-agent, conversation, message, turn, and attempt records;
+- atomic conversation start and PostgreSQL integration tests.
+
+Planned but not yet implemented:
+
+- public conversation commands;
+- execution-event log and SSE replay;
+- transactional outbox and worker claiming;
+- context management, tool routing, policies, approvals, model adapters,
+  evaluation, and rollout control.

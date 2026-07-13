@@ -1,0 +1,92 @@
+# Switchboard Progress
+
+## Status
+
+- **Current phase:** Phase 1 — Conversation Platform Foundations
+- **Current milestone:** Milestone 1 — Conversation platform
+- **Completed through:** Day 2
+- **Next session:** Day 3 — Durable execution events and reconnectable SSE
+
+## Progress log
+
+| Day | Status | Learn | Build | Validation | Commit | Earn / interview evidence | Debt / follow-up |
+|---:|---|---|---|---|---|---|---|
+| 0 | Complete | Product/platform boundary; durable execution; offline vs live evaluation | Documentation source of truth and initial ADRs | Cross-document review completed | N/A | Explain Switchboard as shared conversation, tool-execution, and quality-control infrastructure | Keep documents aligned with implementation |
+| 1 | Complete | Modular monolith, ports/adapters, API versus worker lifecycle | Python 3.13 scaffold, FastAPI health/readiness, separate worker, PostgreSQL, Redis, Docker, CI | Ruff, mypy, pytest, architecture tests, container build | `chore(scaffold): establish Switchboard API, worker, and local infrastructure` | Explain why durable work is separated from the HTTP process and frameworks remain outside the domain | No product API beyond health endpoints |
+| 2 | Complete | Conversation history versus logical turns and physical attempts; transaction and ordering invariants | Versioned agents, conversations, immutable messages, turns, attempts, Alembic, repositories, UoW, atomic `StartConversation` | PostgreSQL migration, rollback, constraint, persistence, and concurrent-append tests | `feat(conversations): add durable conversation and turn model` | Explain deterministic per-conversation ordering, version pinning, and atomic durable turn creation | No execution events, outbox, streaming API, or worker dispatch yet |
+| 3 | Planned | SSE as a delivery view over a durable event log | Execution events, simulator, replay-then-tail service, reconnectable SSE | Cursor, replay, concurrency, terminal-stream, and disconnect tests | `feat(streaming): add durable reconnectable turn event stream` | Explain committed-event replay and why transport disconnect is not cancellation | Outbox and worker recovery remain later work |
+
+## Milestones
+
+### Milestone 0 — Documentation and readiness
+
+- [x] Project overview
+- [x] Requirements
+- [x] Architecture
+- [x] Use cases
+- [x] Domain model
+- [x] Security and policy model
+- [x] Evaluation strategy
+- [x] Testing strategy
+- [x] Operations model
+- [x] Delivery plan
+- [x] Initial ADRs
+- [x] Developer review and accepted changes
+- [x] Day 1 technology decisions
+
+### Milestone 1 — Conversation platform
+
+- [x] Scaffold and CI
+- [x] Persistence and migrations
+- [x] Versioned agents and conversations
+- [x] Durable conversation, turn, and attempt model
+- [ ] Durable execution-event model
+- [ ] SSE streaming
+- [ ] Context-window management
+- [ ] Tool registry and conformance
+- [ ] Shared conversation API
+- [ ] Orchestration adapter
+- [ ] Policy and approval
+- [ ] Phase integration
+
+### Milestone 2 — Routing and reliable execution
+
+- [ ] Routing design doc
+- [ ] Hybrid router
+- [ ] Routing eval
+- [ ] Structured tracing and replay
+- [ ] Latency attribution
+- [ ] Outbox and worker recovery
+- [ ] Unknown-outcome reconciliation
+- [ ] Shadow and canary rollout
+
+### Milestone 3 — Evaluation and capstone
+
+- [ ] Versioned eval platform
+- [ ] Automated scoring
+- [ ] CI regression gate
+- [ ] Reporting view
+- [ ] Simplification ADR
+- [ ] Mentoring artifacts
+- [ ] Full test strategy
+- [ ] Final pipeline and walkthrough
+
+## Accepted implementation decisions
+
+- Start as a modular monolith with separate API and worker processes.
+- Keep domain code independent from FastAPI, SQLAlchemy, Redis, and orchestration frameworks.
+- Use PostgreSQL as the durable source of truth and Redis only as an optimization.
+- Model conversation history separately from logical turn execution and physical attempts.
+- Order messages with a positive per-conversation sequence allocated under a row lock.
+- Store a default agent version on the conversation and pin the actual version on every turn.
+- Require explicit unit-of-work commit for multi-record application transactions.
+- Do not claim exactly-once effects across arbitrary external systems.
+
+## Known debt
+
+- The public API currently exposes only health/readiness endpoints.
+- No transactional outbox or durable worker claiming exists yet.
+- No execution-event history or reconnectable stream exists yet.
+- Agent versions do not yet contain prompt, model, tool, router, and policy configuration.
+- Tenant ownership is validated by the application rather than complete composite tenant constraints.
+- Message append-only behavior is enforced by domain/repository convention, not database permissions.
