@@ -24,13 +24,8 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, value: str) -> str:
-        allowed_prefixes = (
-            "postgresql://",
-            "postgresql+psycopg://",
-        )
-
-        if not value.startswith(allowed_prefixes):
-            raise ValueError("database_url must use PostgreSQL with a psycopg-compatible scheme")
+        if not value.startswith("postgresql+psycopg://"):
+            raise ValueError("database_url must use the postgresql+psycopg scheme")
 
         return value
 

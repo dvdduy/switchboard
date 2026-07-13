@@ -58,6 +58,22 @@ def test_settings_reject_non_postgresql_database_urls(
 
 
 @pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql://localhost/switchboard",
+        "sqlite:///switchboard.db",
+        "mysql://localhost/switchboard",
+        "not-a-url",
+    ],
+)
+def test_settings_reject_non_psycopg_database_urls(
+    database_url: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(database_url=database_url)
+
+
+@pytest.mark.parametrize(
     "redis_url",
     [
         "http://localhost:6379",

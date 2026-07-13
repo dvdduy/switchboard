@@ -3,11 +3,19 @@
 from dataclasses import dataclass
 
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from switchboard.adapters.cache.redis_health import RedisHealthProbe
 from switchboard.adapters.persistence.postgres_health import (
     PostgresHealthProbe,
+)
+from switchboard.adapters.persistence.unit_of_work import (
+    SqlAlchemyUnitOfWorkFactory,
 )
 from switchboard.application.services.readiness import ReadinessService
 from switchboard.bootstrap.config import Settings
@@ -18,6 +26,8 @@ class RuntimeResources:
     """Infrastructure resources owned by one runtime process."""
 
     database_engine: AsyncEngine
+    session_factory: async_sessionmaker[AsyncSession]
+    unit_of_work_factory: SqlAlchemyUnitOfWorkFactory
     redis_client: Redis
     readiness_service: ReadinessService
 
@@ -36,6 +46,13 @@ def build_runtime_resources(settings: Settings) -> RuntimeResources:
         pool_pre_ping=True,
     )
 
+    session_factory = async_sessionmaker(
+        database_engine,
+        expire_on_commit=False,
+    )
+
+    unit_of_work_factory = SqlAlchemyUnitOfWorkFactory(session_factory)
+
     redis_client = Redis.from_url(
         settings.redis_url,
         decode_responses=True,
@@ -50,6 +67,8 @@ def build_runtime_resources(settings: Settings) -> RuntimeResources:
 
     return RuntimeResources(
         database_engine=database_engine,
+        session_factory=session_factory,
+        unit_of_work_factory=unit_of_work_factory,
         redis_client=redis_client,
         readiness_service=readiness_service,
     )

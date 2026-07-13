@@ -1,21 +1,17 @@
-"""Tests enforcing dependency direction around the domain layer."""
+"""Tests enforcing dependency direction around the application layer."""
 
 import ast
 from pathlib import Path
 
-DOMAIN_ROOT = Path("src/switchboard/domain")
+APPLICATION_ROOT = Path("src/switchboard/application")
 
 FORBIDDEN_IMPORT_PREFIXES = (
     "alembic",
     "fastapi",
-    "httpx",
-    "langgraph",
     "psycopg",
-    "pydantic",
     "redis",
     "sqlalchemy",
     "switchboard.adapters",
-    "switchboard.application",
     "switchboard.bootstrap",
     "switchboard.workers",
 )
@@ -29,7 +25,10 @@ def _is_forbidden(module_name: str) -> bool:
 
 
 def _find_forbidden_imports(path: Path) -> list[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = ast.parse(
+        path.read_text(encoding="utf-8"),
+        filename=str(path),
+    )
     violations: list[str] = []
 
     for node in ast.walk(tree):
@@ -47,14 +46,14 @@ def _find_forbidden_imports(path: Path) -> list[str]:
     return violations
 
 
-def test_domain_does_not_depend_on_outer_layers_or_frameworks() -> None:
+def test_application_does_not_depend_on_adapters_or_frameworks() -> None:
     violations = [
         violation
-        for path in DOMAIN_ROOT.rglob("*.py")
+        for path in APPLICATION_ROOT.rglob("*.py")
         for violation in _find_forbidden_imports(path)
     ]
 
     assert violations == [], (
-        "The domain layer must depend only on the Python standard library "
-        "and other domain modules:\n" + "\n".join(violations)
+        "The application layer may depend on domain and standard "
+        "Python abstractions, but not adapters or infrastructure:\n" + "\n".join(violations)
     )

@@ -1,0 +1,427 @@
+"""Relational schema for Switchboard's durable domain state."""
+
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
+
+NAMING_CONVENTION = {
+    "ix": "ix_%(table_name)s_%(column_0_name)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": ("fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s"),
+    "pk": "pk_%(table_name)s",
+}
+
+metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+agent_definitions = Table(
+    "agent_definitions",
+    metadata,
+    Column(
+        "id",
+        Uuid(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "team_id",
+        Uuid(as_uuid=True),
+        nullable=False,
+    ),
+    Column(
+        "name",
+        String(200),
+        nullable=False,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+    ),
+    CheckConstraint(
+        "btrim(name) <> ''",
+        name="name_not_blank",
+    ),
+)
+
+
+agent_versions = Table(
+    "agent_versions",
+    metadata,
+    Column(
+        "id",
+        Uuid(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "agent_definition_id",
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "agent_definitions.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    ),
+    Column(
+        "version_number",
+        Integer,
+        nullable=False,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+    ),
+    UniqueConstraint(
+        "agent_definition_id",
+        "version_number",
+        name="agent_definition_version",
+    ),
+    CheckConstraint(
+        "version_number > 0",
+        name="version_number_positive",
+    ),
+)
+
+
+conversations = Table(
+    "conversations",
+    metadata,
+    Column(
+        "id",
+        Uuid(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "team_id",
+        Uuid(as_uuid=True),
+        nullable=False,
+    ),
+    Column(
+        "default_agent_version_id",
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "agent_versions.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    ),
+    Column(
+        "status",
+        String(32),
+        nullable=False,
+    ),
+    Column(
+        "next_message_sequence",
+        Integer,
+        nullable=False,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+    ),
+    Column(
+        "updated_at",
+        DateTime(timezone=True),
+        nullable=False,
+    ),
+    CheckConstraint(
+        "status IN ('active', 'closed')",
+        name="status_valid",
+    ),
+    CheckConstraint(
+        "next_message_sequence > 0",
+        name="next_message_sequence_positive",
+    ),
+    CheckConstraint(
+        "updated_at >= created_at",
+        name="updated_at_not_before_created_at",
+    ),
+)
+
+
+messages = Table(
+    "messages",
+    metadata,
+    Column(
+        "id",
+        Uuid(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "conversation_id",
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "conversations.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    ),
+    Column(
+        "sequence",
+        Integer,
+        nullable=False,
+    ),
+    Column(
+        "role",
+        String(32),
+        nullable=False,
+    ),
+    Column(
+        "content",
+        Text,
+        nullable=False,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+    ),
+    UniqueConstraint(
+        "conversation_id",
+        "sequence",
+        name="conversation_message_sequence",
+    ),
+    # Required by the composite foreign key from turns.
+    UniqueConstraint(
+        "conversation_id",
+        "id",
+        name="conversation_message_identity",
+    ),
+    CheckConstraint(
+        "sequence > 0",
+        name="sequence_positive",
+    ),
+    CheckConstraint(
+        "role IN ('user', 'assistant')",
+        name="role_valid",
+    ),
+    CheckConstraint(
+        "btrim(content) <> ''",
+        name="content_not_blank",
+    ),
+)
+
+
+turns = Table(
+    "turns",
+    metadata,
+    Column(
+        "id",
+        Uuid(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "conversation_id",
+        Uuid(as_uuid=True),
+        nullable=False,
+    ),
+    Column(
+        "input_message_id",
+        Uuid(as_uuid=True),
+        nullable=False,
+    ),
+    Column(
+        "agent_version_id",
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "agent_versions.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    ),
+    Column(
+        "status",
+        String(32),
+        nullable=False,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+    ),
+    Column(
+        "completed_at",
+        DateTime(timezone=True),
+        nullable=True,
+    ),
+    ForeignKeyConstraint(
+        ["conversation_id", "input_message_id"],
+        ["messages.conversation_id", "messages.id"],
+        name="turn_input_message",
+        ondelete="RESTRICT",
+    ),
+    UniqueConstraint(
+        "input_message_id",
+        name="input_message_turn",
+    ),
+    CheckConstraint(
+        ("status IN ('received', 'running', 'completed', 'failed', 'cancelled')"),
+        name="status_valid",
+    ),
+    CheckConstraint(
+        """
+        (
+            status IN ('received', 'running')
+            AND completed_at IS NULL
+        )
+        OR
+        (
+            status IN ('completed', 'failed', 'cancelled')
+            AND completed_at IS NOT NULL
+        )
+        """,
+        name="completion_matches_status",
+    ),
+    CheckConstraint(
+        "completed_at IS NULL OR completed_at >= created_at",
+        name="completed_at_not_before_created_at",
+    ),
+)
+
+
+turn_attempts = Table(
+    "turn_attempts",
+    metadata,
+    Column(
+        "id",
+        Uuid(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "turn_id",
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "turns.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    ),
+    Column(
+        "attempt_number",
+        Integer,
+        nullable=False,
+    ),
+    Column(
+        "status",
+        String(32),
+        nullable=False,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        nullable=False,
+    ),
+    Column(
+        "started_at",
+        DateTime(timezone=True),
+        nullable=True,
+    ),
+    Column(
+        "completed_at",
+        DateTime(timezone=True),
+        nullable=True,
+    ),
+    Column(
+        "failure_code",
+        String(100),
+        nullable=True,
+    ),
+    UniqueConstraint(
+        "turn_id",
+        "attempt_number",
+        name="turn_attempt_number",
+    ),
+    CheckConstraint(
+        "attempt_number > 0",
+        name="attempt_number_positive",
+    ),
+    CheckConstraint(
+        ("status IN ('pending', 'running', 'succeeded', 'failed')"),
+        name="status_valid",
+    ),
+    CheckConstraint(
+        """
+        (
+            status = 'pending'
+            AND started_at IS NULL
+            AND completed_at IS NULL
+            AND failure_code IS NULL
+        )
+        OR
+        (
+            status = 'running'
+            AND started_at IS NOT NULL
+            AND completed_at IS NULL
+            AND failure_code IS NULL
+        )
+        OR
+        (
+            status = 'succeeded'
+            AND started_at IS NOT NULL
+            AND completed_at IS NOT NULL
+            AND failure_code IS NULL
+        )
+        OR
+        (
+            status = 'failed'
+            AND started_at IS NOT NULL
+            AND completed_at IS NOT NULL
+            AND failure_code IS NOT NULL
+            AND btrim(failure_code) <> ''
+        )
+        """,
+        name="lifecycle_fields_match_status",
+    ),
+    CheckConstraint(
+        "started_at IS NULL OR started_at >= created_at",
+        name="started_at_not_before_created_at",
+    ),
+    CheckConstraint(
+        ("completed_at IS NULL OR (started_at IS NOT NULL AND completed_at >= started_at)"),
+        name="completed_at_not_before_started_at",
+    ),
+)
+
+
+Index(
+    "ix_agent_definitions_team_id",
+    agent_definitions.c.team_id,
+)
+
+Index(
+    "ix_conversations_team_status",
+    conversations.c.team_id,
+    conversations.c.status,
+)
+
+Index(
+    "ix_turns_conversation_status",
+    turns.c.conversation_id,
+    turns.c.status,
+)
+
+Index(
+    "ix_turn_attempts_turn_status",
+    turn_attempts.c.turn_id,
+    turn_attempts.c.status,
+)

@@ -33,13 +33,10 @@ Start PostgreSQL and Redis:
 docker compose up -d postgres redis
 ```
 
----
+## PostgreSQL integration tests
 
-## 6. Run the automated checks
+Start the disposable integration database:
 
-```powershell
-uv run ruff format .
-uv run ruff check .
-uv run mypy
-uv run pytest
+```bash
+docker compose --profile test up -d postgres-test
 ```

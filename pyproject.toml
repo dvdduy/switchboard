@@ -5,6 +5,7 @@ description = "Shared infrastructure for AI conversations, tool routing, safe ex
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "alembic>=1.18.5",
     "fastapi",
     "psycopg[binary]",
     "pydantic-settings",
