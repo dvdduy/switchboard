@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Protocol
 
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.command_receipts import CommandOperation, CommandReceipt
 from switchboard.domain.context import ConversationSummary
 from switchboard.domain.conversations import Conversation, Message, MessageRole
 from switchboard.domain.execution_events import (
@@ -122,6 +123,35 @@ class ConversationRepository(Protocol):
         through_sequence: int,
     ) -> tuple[Message, ...]:
         """Return committed messages through an inclusive sequence cutoff."""
+
+    async def list_messages_after(
+        self,
+        *,
+        conversation_id: ConversationId,
+        after_sequence: int,
+        limit: int,
+    ) -> tuple[Message, ...]:
+        """Return a bounded ordered page after an exclusive sequence cursor."""
+
+
+class CommandReceiptRepository(Protocol):
+    """Persistence authority for durable command idempotency."""
+
+    async def add_or_get(
+        self,
+        receipt: CommandReceipt,
+    ) -> tuple[CommandReceipt, bool]:
+        """Insert a receipt or return the concurrent authority and creation flag."""
+
+    async def get_by_authority(
+        self,
+        *,
+        team_id: TeamId,
+        operation: CommandOperation,
+        command_scope: str,
+        idempotency_key_hash: str,
+    ) -> CommandReceipt | None:
+        """Return one receipt by its team/operation/scope/key authority."""
 
 
 class ConversationSummaryRepository(Protocol):

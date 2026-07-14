@@ -5,13 +5,14 @@ from collections.abc import AsyncIterator, Mapping
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header
 from fastapi.responses import StreamingResponse
 
-from switchboard.application.errors import TurnNotFoundError
+from switchboard.adapters.api.dependencies import require_team_id
+from switchboard.adapters.api.errors import V1ApiError
 from switchboard.application.services.replay_turn_events import ReplayTurnEvents
 from switchboard.domain.execution_events import ExecutionEvent
-from switchboard.domain.identifiers import TurnId
+from switchboard.domain.identifiers import TeamId, TurnId
 
 
 def _to_json_value(value: object) -> object:
@@ -51,9 +52,10 @@ def parse_last_event_id(value: str | None) -> int:
         return 0
 
     if not value or not value.isascii() or not value.isdecimal():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Last-Event-ID must be a non-negative integer",
+        raise V1ApiError(
+            status_code=422,
+            code="invalid_request",
+            message="The request is invalid.",
         )
 
     return int(value)
@@ -69,6 +71,7 @@ def create_turn_events_router(
     @router.get("/{turn_id}/events")
     async def stream_turn_events(
         turn_id: UUID,
+        team_id: Annotated[TeamId, Depends(require_team_id)],
         last_event_id: Annotated[
             str | None,
             Header(alias="Last-Event-ID"),
@@ -76,16 +79,11 @@ def create_turn_events_router(
     ) -> StreamingResponse:
         cursor = parse_last_event_id(last_event_id)
 
-        try:
-            observer = await replay_turn_events.open(
-                turn_id=TurnId(turn_id),
-                after_sequence=cursor,
-            )
-        except TurnNotFoundError as error:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=str(error),
-            ) from error
+        observer = await replay_turn_events.open(
+            team_id=team_id,
+            turn_id=TurnId(turn_id),
+            after_sequence=cursor,
+        )
 
         return StreamingResponse(
             _serialize_events(observer),

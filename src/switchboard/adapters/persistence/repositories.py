@@ -12,6 +12,7 @@ from switchboard.adapters.persistence.schema import (
     agent_definitions,
     agent_tool_bindings,
     agent_versions,
+    command_receipts,
     conversation_summaries,
     conversations,
     execution_events,
@@ -31,6 +32,8 @@ from switchboard.adapters.persistence.translators import (
     agent_tool_binding_to_record,
     agent_version_from_record,
     agent_version_to_record,
+    command_receipt_from_record,
+    command_receipt_to_record,
     conversation_from_record,
     conversation_summary_from_record,
     conversation_summary_to_record,
@@ -64,6 +67,7 @@ from switchboard.application.errors import (
     TurnNotFoundError,
 )
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.command_receipts import CommandOperation, CommandReceipt
 from switchboard.domain.context import ConversationSummary
 from switchboard.domain.conversations import Conversation, Message, MessageRole
 from switchboard.domain.execution_events import (
@@ -309,6 +313,80 @@ class SqlAlchemyConversationRepository:
         )
         result = await self._session.execute(statement)
         return tuple(message_from_record(record) for record in result.mappings())
+
+    async def list_messages_after(
+        self,
+        *,
+        conversation_id: ConversationId,
+        after_sequence: int,
+        limit: int,
+    ) -> tuple[Message, ...]:
+        if after_sequence < 0:
+            raise ValueError("after_sequence must not be negative")
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+
+        statement = (
+            select(messages)
+            .where(
+                messages.c.conversation_id == conversation_id,
+                messages.c.sequence > after_sequence,
+            )
+            .order_by(messages.c.sequence)
+            .limit(limit)
+        )
+        result = await self._session.execute(statement)
+        return tuple(message_from_record(record) for record in result.mappings())
+
+
+class SqlAlchemyCommandReceiptRepository:
+    """Persists one immutable authority for each idempotent command scope."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_or_get(
+        self,
+        receipt: CommandReceipt,
+    ) -> tuple[CommandReceipt, bool]:
+        statement = (
+            postgresql_insert(command_receipts)
+            .values(command_receipt_to_record(receipt))
+            .on_conflict_do_nothing(constraint="command_receipt_authority")
+            .returning(*command_receipts.c)
+        )
+        result = await self._session.execute(statement)
+        inserted_record = result.mappings().one_or_none()
+        if inserted_record is not None:
+            return command_receipt_from_record(inserted_record), True
+
+        authority = await self.get_by_authority(
+            team_id=receipt.team_id,
+            operation=receipt.operation,
+            command_scope=receipt.command_scope,
+            idempotency_key_hash=receipt.idempotency_key_hash,
+        )
+        if authority is None:
+            raise RuntimeError("command receipt authority disappeared after conflict")
+        return authority, False
+
+    async def get_by_authority(
+        self,
+        *,
+        team_id: TeamId,
+        operation: CommandOperation,
+        command_scope: str,
+        idempotency_key_hash: str,
+    ) -> CommandReceipt | None:
+        statement = select(command_receipts).where(
+            command_receipts.c.team_id == team_id,
+            command_receipts.c.operation == operation.value,
+            command_receipts.c.command_scope == command_scope,
+            command_receipts.c.idempotency_key_hash == idempotency_key_hash,
+        )
+        result = await self._session.execute(statement)
+        record = result.mappings().one_or_none()
+        return None if record is None else command_receipt_from_record(record)
 
 
 class SqlAlchemyConversationSummaryRepository:

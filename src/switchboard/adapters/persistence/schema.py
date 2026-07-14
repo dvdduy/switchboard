@@ -506,6 +506,92 @@ turn_attempts = Table(
 )
 
 
+command_receipts = Table(
+    "command_receipts",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column("team_id", Uuid(as_uuid=True), nullable=False),
+    Column("operation", String(32), nullable=False),
+    Column("command_scope", String(36), nullable=False),
+    Column("idempotency_key_hash", String(64), nullable=False),
+    Column("request_fingerprint", String(64), nullable=False),
+    Column(
+        "conversation_id",
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "conversations.id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=False,
+    ),
+    Column(
+        "message_id",
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "messages.id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=False,
+    ),
+    Column(
+        "turn_id",
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "turns.id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=False,
+    ),
+    Column(
+        "attempt_id",
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "turn_attempts.id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=False,
+    ),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint(
+        "team_id",
+        "operation",
+        "command_scope",
+        "idempotency_key_hash",
+        name="command_receipt_authority",
+    ),
+    CheckConstraint(
+        "operation IN ('create_conversation', 'continue_conversation')",
+        name="operation_valid",
+    ),
+    CheckConstraint(
+        """
+        (operation = 'create_conversation' AND command_scope = 'create')
+        OR (
+            operation = 'continue_conversation'
+            AND command_scope = conversation_id::text
+        )
+        """,
+        name="scope_matches_operation",
+    ),
+    CheckConstraint(
+        "idempotency_key_hash ~ '^[0-9a-f]{64}$'",
+        name="idempotency_key_hash_valid",
+    ),
+    CheckConstraint(
+        "request_fingerprint ~ '^[0-9a-f]{64}$'",
+        name="request_fingerprint_valid",
+    ),
+)
+
+
 execution_events = Table(
     "execution_events",
     metadata,

@@ -59,6 +59,16 @@ def make_app(
     )
 
 
+async def team_headers(
+    unit_of_work_factory: SqlAlchemyUnitOfWorkFactory,
+    conversation_id,
+) -> dict[str, str]:
+    async with unit_of_work_factory() as unit_of_work:
+        conversation = await unit_of_work.conversations.get(conversation_id)
+    assert conversation is not None
+    return {"X-Team-ID": str(conversation.team_id)}
+
+
 async def append_started_event(
     unit_of_work_factory: SqlAlchemyUnitOfWorkFactory,
     *,
@@ -115,6 +125,7 @@ async def test_terminal_stream_replays_remaining_events_and_closes(
 ) -> None:
     now = datetime(2026, 7, 13, 16, 0, tzinfo=UTC)
     turn, attempt = await seed_running_turn(unit_of_work_factory, now=now)
+    headers = await team_headers(unit_of_work_factory, turn.conversation_id)
     await append_started_event(
         unit_of_work_factory,
         turn_id=turn.id,
@@ -134,7 +145,7 @@ async def test_terminal_stream_replays_remaining_events_and_closes(
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(
             f"/api/v1/turns/{turn.id}/events",
-            headers={"Last-Event-ID": "1"},
+            headers={**headers, "Last-Event-ID": "1"},
         )
 
     assert response.status_code == 200
@@ -143,11 +154,37 @@ async def test_terminal_stream_replays_remaining_events_and_closes(
     assert sleeper.calls == 0
 
 
+async def test_cross_team_stream_is_rejected_before_streaming(
+    unit_of_work_factory: SqlAlchemyUnitOfWorkFactory,
+) -> None:
+    now = datetime(2026, 7, 13, 16, 0, tzinfo=UTC)
+    turn, _ = await seed_running_turn(unit_of_work_factory, now=now)
+    sleeper = PollGateSleeper(expected_observers=1)
+    transport = ASGITransport(app=make_app(unit_of_work_factory, sleeper))
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            f"/api/v1/turns/{turn.id}/events",
+            headers={"X-Team-ID": str(uuid4())},
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {
+            "code": "resource_not_found",
+            "message": "The requested resource was not found.",
+        }
+    }
+    assert "text/event-stream" not in response.headers["content-type"]
+    assert sleeper.calls == 0
+
+
 async def test_running_stream_tails_for_two_independent_observers(
     unit_of_work_factory: SqlAlchemyUnitOfWorkFactory,
 ) -> None:
     now = datetime(2026, 7, 13, 16, 0, tzinfo=UTC)
     turn, attempt = await seed_running_turn(unit_of_work_factory, now=now)
+    headers = await team_headers(unit_of_work_factory, turn.conversation_id)
     await append_started_event(
         unit_of_work_factory,
         turn_id=turn.id,
@@ -159,8 +196,12 @@ async def test_running_stream_tails_for_two_independent_observers(
     transport = ASGITransport(app=make_app(unit_of_work_factory, sleeper))
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        first_request = asyncio.create_task(client.get(f"/api/v1/turns/{turn.id}/events"))
-        second_request = asyncio.create_task(client.get(f"/api/v1/turns/{turn.id}/events"))
+        first_request = asyncio.create_task(
+            client.get(f"/api/v1/turns/{turn.id}/events", headers=headers)
+        )
+        second_request = asyncio.create_task(
+            client.get(f"/api/v1/turns/{turn.id}/events", headers=headers)
+        )
 
         await asyncio.wait_for(sleeper.reached.wait(), timeout=1)
         await complete_turn(
@@ -188,6 +229,7 @@ async def test_disconnecting_observer_does_not_mutate_running_turn(
 ) -> None:
     now = datetime(2026, 7, 13, 16, 0, tzinfo=UTC)
     turn, attempt = await seed_running_turn(unit_of_work_factory, now=now)
+    headers = await team_headers(unit_of_work_factory, turn.conversation_id)
     await append_started_event(
         unit_of_work_factory,
         turn_id=turn.id,
@@ -199,7 +241,9 @@ async def test_disconnecting_observer_does_not_mutate_running_turn(
     transport = ASGITransport(app=make_app(unit_of_work_factory, sleeper))
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        request = asyncio.create_task(client.get(f"/api/v1/turns/{turn.id}/events"))
+        request = asyncio.create_task(
+            client.get(f"/api/v1/turns/{turn.id}/events", headers=headers)
+        )
         await asyncio.wait_for(sleeper.reached.wait(), timeout=1)
         request.cancel()
 

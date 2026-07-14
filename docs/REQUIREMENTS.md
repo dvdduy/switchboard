@@ -18,6 +18,13 @@
 | FR-004 | P0 | Pin each conversation to an `AgentVersion`. | New versions do not silently alter existing conversations. |
 | FR-005 | P0 | Manage context within a defined token budget using truncation and/or summarization. | Long-conversation tests remain within budget, preserve configured mandatory context, and represent omitted history with a provenance-bearing summary. |
 
+Day 6 evidence for FR-001 and FR-002: documented `/api/v1` create and continue
+commands, PostgreSQL-backed idempotent acceptance, ordered exclusive-cursor
+history, safe turn reads, returned reconnectable event URLs, team-aware SSE
+preflight, and an external-client PostgreSQL test that explicitly executes an
+accepted turn before consuming its terminal stream. Automatic dispatch remains
+deferred because no transactional outbox or durable worker claiming exists.
+
 Day 4 evidence for FR-005: immutable agent-version context policies, explicit
 budget failures, deterministic newest-suffix selection, provenance-bearing
 durable prefix summaries, turn-pinned message cutoffs, compatible-summary reuse,

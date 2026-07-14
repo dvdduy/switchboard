@@ -23,7 +23,7 @@ flowchart LR
 ## Target container view
 
 This diagram includes later outbox, model, tool, evaluation, and rollout
-components. The current Day 5 deployment subset is listed below.
+components. The current Day 6 deployment subset is listed below.
 
 ```mermaid
 flowchart TB
@@ -99,8 +99,9 @@ src/switchboard/
 ## Target runtime turn flow
 
 The following end-to-end outbox, worker, routing, policy, tool, and model flow is
-the target architecture; Days 3–5 implement the durable event/SSE, context, and
-tool-registry control-plane subsets described below.
+the target architecture; Days 3–6 implement the durable event/SSE, context,
+tool-registry control-plane, and public conversation-acceptance subsets
+described below.
 
 ```mermaid
 sequenceDiagram
@@ -144,8 +145,31 @@ Target architecture, not yet implemented: the API transaction will commit:
 3. initial execution event;
 4. outbox record.
 
-The future worker will claim outbox records and advance the state machine. Day 3
-does not yet provide the transactional outbox, durable claiming, or recovery.
+The future worker will claim outbox records and advance the state machine. Day 6
+durably accepts a message, turn, pending attempt, and command receipt, but does
+not yet provide the transactional outbox, durable claiming, or recovery.
+
+## Conversation API
+
+The implemented `/api/v1` boundary exposes create/continue commands,
+conversation metadata, exclusive-cursor message history, turn inspection, and
+the existing event stream. Pydantic transport models and stable error envelopes
+are separate from domain entities and SQLAlchemy records; routes delegate to
+application services and issue no SQL.
+
+Every operation requires an explicit `X-Team-ID` UUID. It is a development
+ownership context, not authentication. Commands also require an opaque
+`Idempotency-Key`. PostgreSQL command receipts store its SHA-256 hash, a
+versioned canonical request fingerprint, and immutable result identifiers.
+Receipt uniqueness serializes duplicate commands; the receipt and accepted
+conversation graph commit in the same unit of work. Identical replay returns
+the original result, while conflicting reuse is rejected.
+
+`202 Accepted` means the message, received turn, pending attempt, and receipt
+are durable. It does not mean execution started. No route launches background
+work; tests invoke the deterministic runner explicitly when they need terminal
+events. A transactional outbox remains necessary to bridge acceptance to
+automatic durable dispatch.
 
 ## Execution state machine
 
@@ -340,7 +364,7 @@ Only when measurement justifies it:
 No microservice split is required merely to demonstrate seniority.
 
 
-## Implementation status after Day 5
+## Implementation status after Day 6
 
 Implemented:
 
@@ -374,10 +398,16 @@ Implemented:
 - exact successful-run activation and immutable agent-version binding clones;
 - deterministic local read-only and idempotent/reconcilable mutating adapters;
 - an eligible query filtered by binding, team, active state, and conformance.
+- versioned create/continue, conversation, message-history, and turn APIs;
+- PostgreSQL-backed command receipts with hashed keys, canonical request
+  fingerprints, atomic graph creation, deterministic replay, and conflict
+  detection;
+- bounded strict DTO validation, stable sanitized errors, development team
+  ownership checks, deterministic pagination, and OpenAPI examples;
+- team-aware SSE preflight and external-client contract/concurrency coverage.
 
 Planned but not yet implemented:
 
-- public conversation commands;
 - transactional outbox and worker claiming;
 - durable worker recovery;
 - real model-provider execution;
@@ -390,3 +420,5 @@ Planned but not yet implemented:
   filtering, policies, approvals, model adapters, evaluation, and rollout control;
 - public registry-management APIs, production HTTP/MCP/queue adapters, and
   conformance retention or production telemetry policy.
+- production authentication/authorization, rate limits, quotas, and opaque
+  retention-aware history cursors.

@@ -7,17 +7,43 @@ from uuid import uuid4
 
 import pytest
 
-from switchboard.application.errors import TurnNotFoundError
+from switchboard.application.errors import TurnNotFoundError, TurnTeamMismatchError
 from switchboard.application.services.replay_turn_events import ReplayTurnEvents
+from switchboard.domain.conversations import Conversation, ConversationStatus
 from switchboard.domain.execution_events import ExecutionEvent, ExecutionEventKind
 from switchboard.domain.identifiers import (
     AgentVersionId,
     ConversationId,
     ExecutionEventId,
     MessageId,
+    TeamId,
     TurnId,
 )
 from switchboard.domain.turns import Turn, TurnStatus
+
+TEAM_ID = TeamId(uuid4())
+
+
+class FakeConversationRepository:
+    def __init__(self, turn: Turn | None) -> None:
+        self.conversation = (
+            None
+            if turn is None
+            else Conversation(
+                id=turn.conversation_id,
+                team_id=TEAM_ID,
+                default_agent_version_id=turn.agent_version_id,
+                status=ConversationStatus.ACTIVE,
+                next_message_sequence=2,
+                created_at=turn.created_at,
+                updated_at=turn.created_at,
+            )
+        )
+
+    async def get(self, conversation_id: ConversationId) -> Conversation | None:
+        if self.conversation is None or self.conversation.id != conversation_id:
+            return None
+        return self.conversation
 
 
 class FakeTurnRepository:
@@ -67,6 +93,7 @@ class FakeUnitOfWork:
     ) -> None:
         self._factory = factory
         self.turns = turns
+        self.conversations = factory.conversations
 
     async def __aenter__(self) -> Self:
         self._factory.active += 1
@@ -84,6 +111,7 @@ class FakeUnitOfWork:
 class FakeUnitOfWorkFactory:
     def __init__(self, turns: FakeTurnRepository) -> None:
         self.turns = turns
+        self.conversations = FakeConversationRepository(turns.turn)
         self.created = 0
         self.active = 0
 
@@ -166,7 +194,7 @@ async def test_negative_cursor_is_rejected_before_preflight() -> None:
     )
 
     with pytest.raises(ValueError, match="after_sequence must not be negative"):
-        await service.open(turn_id=turn.id, after_sequence=-1)
+        await service.open(team_id=TEAM_ID, turn_id=turn.id, after_sequence=-1)
 
     assert factory.created == 0
 
@@ -180,7 +208,27 @@ async def test_missing_turn_is_reported_during_preflight() -> None:
     )
 
     with pytest.raises(TurnNotFoundError, match="was not found"):
-        await service.open(turn_id=TurnId(uuid4()), after_sequence=0)
+        await service.open(team_id=TEAM_ID, turn_id=TurnId(uuid4()), after_sequence=0)
+
+    assert factory.created == 1
+    assert factory.active == 0
+
+
+async def test_cross_team_turn_is_rejected_during_preflight() -> None:
+    turn = make_turn()
+    repository = FakeTurnRepository(turn)
+    factory = FakeUnitOfWorkFactory(repository)
+    service = ReplayTurnEvents(
+        unit_of_work_factory=factory,
+        sleeper=AppendingSleeper(factory=factory, events=()),
+    )
+
+    with pytest.raises(TurnTeamMismatchError):
+        await service.open(
+            team_id=TeamId(uuid4()),
+            turn_id=turn.id,
+            after_sequence=0,
+        )
 
     assert factory.created == 1
     assert factory.active == 0
@@ -202,7 +250,7 @@ async def test_replays_after_exclusive_cursor_without_open_transaction() -> None
         batch_size=1,
     )
 
-    observer = await service.open(turn_id=turn.id, after_sequence=1)
+    observer = await service.open(team_id=TEAM_ID, turn_id=turn.id, after_sequence=1)
     first = await anext(observer)
 
     assert first.sequence == 2
@@ -233,7 +281,7 @@ async def test_tails_new_events_after_sleeping_when_caught_up() -> None:
         poll_interval_seconds=0.25,
     )
 
-    observer = await service.open(turn_id=turn.id, after_sequence=0)
+    observer = await service.open(team_id=TEAM_ID, turn_id=turn.id, after_sequence=0)
     events = [event async for event in observer]
 
     assert [event.sequence for event in events] == [1, 2, 3]
@@ -255,8 +303,8 @@ async def test_multiple_observers_keep_independent_cursors() -> None:
         sleeper=AppendingSleeper(factory=factory, events=()),
     )
 
-    first = await service.open(turn_id=turn.id, after_sequence=0)
-    second = await service.open(turn_id=turn.id, after_sequence=0)
+    first = await service.open(team_id=TEAM_ID, turn_id=turn.id, after_sequence=0)
+    second = await service.open(team_id=TEAM_ID, turn_id=turn.id, after_sequence=0)
     first_events, second_events = await asyncio.gather(
         collect_events(first),
         collect_events(second),
@@ -279,8 +327,8 @@ async def test_cancelling_one_observer_does_not_stop_another() -> None:
         sleeper=sleeper,
     )
 
-    cancelled_observer = await service.open(turn_id=turn.id, after_sequence=0)
-    surviving_observer = await service.open(turn_id=turn.id, after_sequence=0)
+    cancelled_observer = await service.open(team_id=TEAM_ID, turn_id=turn.id, after_sequence=0)
+    surviving_observer = await service.open(team_id=TEAM_ID, turn_id=turn.id, after_sequence=0)
     assert (await anext(cancelled_observer)).sequence == 1
     assert (await anext(surviving_observer)).sequence == 1
 

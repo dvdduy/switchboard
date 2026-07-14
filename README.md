@@ -12,7 +12,9 @@ The current implementation provides:
 - turn-pinned, token-budgeted context assembly with durable prefix summaries;
 - team-owned immutable tool manifests with deterministic conformance;
 - exact-version agent bindings and an active-bound eligible-tool query;
-- deterministic read-only and idempotent mutating reference adapters.
+- deterministic read-only and idempotent mutating reference adapters;
+- a versioned conversation API with durable idempotent commands, ordered
+  history reads, turn inspection, and team-aware reconnectable SSE.
 
 Planned capabilities include:
 
@@ -64,8 +66,44 @@ uv run alembic upgrade head
 docker compose up --build api worker
 ```
 
-The public API currently exposes health/readiness and the read-only event stream.
-It does not yet expose a command that creates or continues conversations.
+The public conversation API uses an explicit `X-Team-ID` UUID as development
+identity. This is not production authentication. Create and continue commands
+also require an opaque `Idempotency-Key` of 1–128 visible ASCII characters.
+The key is hashed before persistence.
+
+Create a conversation using an agent version already registered through the
+application workflow:
+
+```bash
+curl -i -X POST \
+  -H "Content-Type: application/json" \
+  -H "X-Team-ID: <team-id>" \
+  -H "Idempotency-Key: create-001" \
+  -d '{"agent_version_id":"<agent-version-id>","initial_user_message":"Which Project Alpha tasks are overdue?"}' \
+  http://127.0.0.1:8000/api/v1/conversations
+```
+
+The API returns `202 Accepted` only after the conversation, user message,
+received turn, pending attempt, and command receipt commit atomically. It does
+not start execution. Repeating the same command with the same key returns the
+original identifiers; reusing the key for different content returns `409`.
+
+Continue and inspect a conversation:
+
+```bash
+curl -i -X POST \
+  -H "Content-Type: application/json" \
+  -H "X-Team-ID: <team-id>" \
+  -H "Idempotency-Key: continue-001" \
+  -d '{"user_message":"Only include tasks assigned to me."}' \
+  http://127.0.0.1:8000/api/v1/conversations/<conversation-id>/turns
+
+curl -H "X-Team-ID: <team-id>" \
+  "http://127.0.0.1:8000/api/v1/conversations/<conversation-id>/messages?after_sequence=0&limit=50"
+
+curl -H "X-Team-ID: <team-id>" \
+  http://127.0.0.1:8000/api/v1/turns/<turn-id>
+```
 
 Given an existing turn ID created through the application/persistence workflow,
 observe its committed events:
@@ -73,6 +111,7 @@ observe its committed events:
 ```bash
 curl -N \
   -H "Accept: text/event-stream" \
+  -H "X-Team-ID: <team-id>" \
   http://127.0.0.1:8000/api/v1/turns/<turn-id>/events
 ```
 
@@ -81,6 +120,7 @@ Reconnect after sequence 3 using the exclusive cursor:
 ```bash
 curl -N \
   -H "Accept: text/event-stream" \
+  -H "X-Team-ID: <team-id>" \
   -H "Last-Event-ID: 3" \
   http://127.0.0.1:8000/api/v1/turns/<turn-id>/events
 ```

@@ -30,6 +30,7 @@ DEFAULT_TEST_DATABASE_URL = (
 TRUNCATE_DOMAIN_TABLES = text(
     """
     TRUNCATE TABLE
+        command_receipts,
         agent_tool_bindings,
         tool_version_states,
         tool_conformance_case_results,

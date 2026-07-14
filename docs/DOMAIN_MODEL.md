@@ -13,6 +13,7 @@ classDiagram
     class Conversation
     class Message
     class ConversationSummary
+    class CommandReceipt
     class TurnExecution
     class ExecutionEvent
     class RoutingDecision
@@ -37,6 +38,7 @@ classDiagram
     Conversation "1" --> "*" ConversationSummary
     AgentVersion "1" --> "*" ConversationSummary
     Conversation "1" --> "*" TurnExecution
+    Conversation "1" --> "*" CommandReceipt
     TurnExecution "1" --> "*" ExecutionEvent
     TurnExecution "1" --> "0..1" RoutingDecision
     TurnExecution "1" --> "*" ToolInvocation
@@ -151,6 +153,18 @@ for the same conversation, agent version, coverage, summarizer version, and
 token-counter version. A summary does not replace or mutate visible messages and
 does not contain private model reasoning.
 
+### CommandReceipt
+
+Immutable durable authority for one accepted public command. It stores team,
+operation, scope, SHA-256 idempotency-key hash, a versioned canonical request
+fingerprint, immutable result identifiers, and creation time. Create commands
+use a fixed scope; continuation commands use the conversation identity.
+
+**Invariant:** One receipt exists per team, operation, scope, and key hash.
+Receipt insertion and the accepted message/turn graph commit atomically.
+Identical fingerprints replay the original result; a different fingerprint is
+a conflict. Raw keys and copied message content are never stored in receipts.
+
 ### TurnExecution
 
 Durable lifecycle of processing one user turn.
@@ -241,7 +255,7 @@ Release identifies a candidate configuration bundle. Deployment records stage, t
 - How long should approval requests and execution events be retained?
 
 
-## Implementation status after Day 5
+## Implementation status after Day 6
 
 Implemented durable entities:
 
@@ -253,6 +267,7 @@ AgentDefinition
 Conversation
 ├── Message
 ├── ConversationSummary
+├── CommandReceipt
 └── Turn
     ├── TurnAttempt
     └── ExecutionEvent
@@ -279,6 +294,14 @@ Implemented invariants:
 - attempts are uniquely ordered within a turn;
 - terminal states require completion timestamps;
 - starting a conversation, first message, first turn, and first attempt is atomic;
+- create and continuation commands atomically persist a hashed-key receipt with
+  the message, turn, and pending attempt;
+- receipt uniqueness is the concurrency authority for idempotent replay;
+- conflicting key reuse creates no second graph, and failed commands leave no
+  partial receipt;
+- public history reads use bounded exclusive sequence cursors;
+- team ownership failures and unknown resources share a non-disclosing API
+  response;
 - a turn's input message must belong to the same conversation;
 - execution-event payloads are immutable JSON-compatible public values;
 - event sequences are turn-local, positive, unique, and allocated under a row lock;

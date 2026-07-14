@@ -6,6 +6,7 @@ from typing import Protocol, cast
 from uuid import UUID
 
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.command_receipts import CommandOperation, CommandReceipt
 from switchboard.domain.context import ContextPolicy, ConversationSummary
 from switchboard.domain.conversations import (
     Conversation,
@@ -21,6 +22,7 @@ from switchboard.domain.identifiers import (
     AgentDefinitionId,
     AgentToolBindingId,
     AgentVersionId,
+    CommandReceiptId,
     ConversationId,
     ConversationSummaryId,
     ExecutionEventId,
@@ -206,6 +208,38 @@ def message_from_record(
         sequence=cast(int, record["sequence"]),
         role=MessageRole(cast(str, record["role"])),
         content=cast(str, record["content"]),
+        created_at=cast(datetime, record["created_at"]),
+    )
+
+
+def command_receipt_to_record(receipt: CommandReceipt) -> dict[str, object]:
+    return {
+        "id": receipt.id,
+        "team_id": receipt.team_id,
+        "operation": receipt.operation.value,
+        "command_scope": receipt.command_scope,
+        "idempotency_key_hash": receipt.idempotency_key_hash,
+        "request_fingerprint": receipt.request_fingerprint,
+        "conversation_id": receipt.conversation_id,
+        "message_id": receipt.message_id,
+        "turn_id": receipt.turn_id,
+        "attempt_id": receipt.attempt_id,
+        "created_at": receipt.created_at,
+    }
+
+
+def command_receipt_from_record(record: Record) -> CommandReceipt:
+    return CommandReceipt(
+        id=CommandReceiptId(cast(UUID, record["id"])),
+        team_id=TeamId(cast(UUID, record["team_id"])),
+        operation=CommandOperation(cast(str, record["operation"])),
+        command_scope=cast(str, record["command_scope"]),
+        idempotency_key_hash=cast(str, record["idempotency_key_hash"]),
+        request_fingerprint=cast(str, record["request_fingerprint"]),
+        conversation_id=ConversationId(cast(UUID, record["conversation_id"])),
+        message_id=MessageId(cast(UUID, record["message_id"])),
+        turn_id=TurnId(cast(UUID, record["turn_id"])),
+        attempt_id=TurnAttemptId(cast(UUID, record["attempt_id"])),
         created_at=cast(datetime, record["created_at"]),
     )
 

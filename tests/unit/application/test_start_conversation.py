@@ -9,12 +9,14 @@ import pytest
 from switchboard.application.errors import (
     AgentTeamMismatchError,
     AgentVersionNotFoundError,
+    IdempotencyConflictError,
 )
 from switchboard.application.use_cases.start_conversation import (
     StartConversation,
     StartConversationCommand,
 )
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.command_receipts import CommandReceipt
 from switchboard.domain.context import ContextPolicy
 from switchboard.domain.conversations import (
     Conversation,
@@ -25,6 +27,7 @@ from switchboard.domain.errors import DomainValidationError
 from switchboard.domain.identifiers import (
     AgentDefinitionId,
     AgentVersionId,
+    CommandReceiptId,
     ConversationId,
     MessageId,
     TeamId,
@@ -179,12 +182,44 @@ class FakeTurnRepository:
         self.attempts.clear()
 
 
+class FakeCommandReceiptRepository:
+    def __init__(self, committed: dict[tuple[object, ...], CommandReceipt]) -> None:
+        self._committed = committed
+        self._staged: dict[tuple[object, ...], CommandReceipt] = {}
+
+    @staticmethod
+    def _key(receipt: CommandReceipt) -> tuple[object, ...]:
+        return (
+            receipt.team_id,
+            receipt.operation,
+            receipt.command_scope,
+            receipt.idempotency_key_hash,
+        )
+
+    async def add_or_get(self, receipt: CommandReceipt) -> tuple[CommandReceipt, bool]:
+        key = self._key(receipt)
+        authority = self._committed.get(key) or self._staged.get(key)
+        if authority is not None:
+            return authority, False
+        self._staged[key] = receipt
+        return receipt, True
+
+    def commit(self) -> None:
+        self._committed.update(self._staged)
+        self._staged.clear()
+
+    def rollback(self) -> None:
+        self._staged.clear()
+
+
 class FakeUnitOfWork:
     def __init__(
         self,
         agents: FakeAgentRepository,
+        receipts: dict[tuple[object, ...], CommandReceipt],
     ) -> None:
         self.agents = agents
+        self.command_receipts = FakeCommandReceiptRepository(receipts)
         self.conversations = FakeConversationRepository()
         self.turns = FakeTurnRepository()
 
@@ -204,10 +239,12 @@ class FakeUnitOfWork:
             await self.rollback()
 
     async def commit(self) -> None:
+        self.command_receipts.commit()
         self.committed = True
 
     async def rollback(self) -> None:
         self.rolled_back = True
+        self.command_receipts.rollback()
         self.conversations.clear_created_state()
         self.turns.clear_created_state()
 
@@ -218,10 +255,11 @@ class FakeUnitOfWorkFactory:
         agents: FakeAgentRepository,
     ) -> None:
         self._agents = agents
+        self.receipts: dict[tuple[object, ...], CommandReceipt] = {}
         self.latest: FakeUnitOfWork | None = None
 
     def __call__(self) -> FakeUnitOfWork:
-        unit_of_work = FakeUnitOfWork(self._agents)
+        unit_of_work = FakeUnitOfWork(self._agents, self.receipts)
         self.latest = unit_of_work
         return unit_of_work
 
@@ -234,6 +272,7 @@ class StartConversationContext:
     message_id: MessageId
     turn_id: TurnId
     attempt_id: TurnAttemptId
+    receipt_id: CommandReceiptId
     agent_definition: AgentDefinition
     agent_version: AgentVersion
 
@@ -250,6 +289,7 @@ def make_context() -> StartConversationContext:
         message_id=MessageId(uuid4()),
         turn_id=TurnId(uuid4()),
         attempt_id=TurnAttemptId(uuid4()),
+        receipt_id=CommandReceiptId(uuid4()),
         agent_definition=AgentDefinition(
             id=agent_definition_id,
             team_id=team_id,
@@ -277,6 +317,7 @@ def build_use_case(
         message_ids=FixedIdGenerator(context.message_id),
         turn_ids=FixedIdGenerator(context.turn_id),
         attempt_ids=FixedIdGenerator(context.attempt_id),
+        receipt_ids=FixedIdGenerator(context.receipt_id),
     )
 
 
@@ -302,6 +343,7 @@ async def test_start_conversation_creates_first_turn_atomically() -> None:
             team_id=context.team_id,
             agent_version_id=context.agent_version.id,
             initial_user_message="Show my overdue tasks.",
+            idempotency_key="start-001",
         )
     )
 
@@ -332,6 +374,64 @@ async def test_start_conversation_creates_first_turn_atomically() -> None:
     assert unit_of_work.turns.attempts[0].attempt_number == 1
 
 
+async def test_identical_start_replay_returns_original_result_without_new_graph() -> None:
+    context = make_context()
+    agents = FakeAgentRepository(
+        definitions=(context.agent_definition,),
+        versions=(context.agent_version,),
+    )
+    factory = FakeUnitOfWorkFactory(agents)
+    use_case = build_use_case(context, factory)
+    command = StartConversationCommand(
+        team_id=context.team_id,
+        agent_version_id=context.agent_version.id,
+        initial_user_message="Show my overdue tasks.",
+        idempotency_key="replay-key",
+    )
+
+    first = await use_case.execute(command)
+    replay = await use_case.execute(command)
+
+    assert replay == first
+    replay_unit_of_work = require_latest(factory)
+    assert not replay_unit_of_work.committed
+    assert replay_unit_of_work.rolled_back
+    assert replay_unit_of_work.conversations.conversations == {}
+    assert replay_unit_of_work.turns.turns == {}
+
+
+async def test_start_rejects_conflicting_idempotency_reuse() -> None:
+    context = make_context()
+    agents = FakeAgentRepository(
+        definitions=(context.agent_definition,),
+        versions=(context.agent_version,),
+    )
+    factory = FakeUnitOfWorkFactory(agents)
+    use_case = build_use_case(context, factory)
+    await use_case.execute(
+        StartConversationCommand(
+            team_id=context.team_id,
+            agent_version_id=context.agent_version.id,
+            initial_user_message="First request",
+            idempotency_key="conflict-key",
+        )
+    )
+
+    with pytest.raises(IdempotencyConflictError):
+        await use_case.execute(
+            StartConversationCommand(
+                team_id=context.team_id,
+                agent_version_id=context.agent_version.id,
+                initial_user_message="Different request",
+                idempotency_key="conflict-key",
+            )
+        )
+
+    conflicting_unit_of_work = require_latest(factory)
+    assert conflicting_unit_of_work.rolled_back
+    assert conflicting_unit_of_work.conversations.conversations == {}
+
+
 async def test_missing_agent_version_creates_no_state() -> None:
     context = make_context()
     factory = FakeUnitOfWorkFactory(FakeAgentRepository())
@@ -346,6 +446,7 @@ async def test_missing_agent_version_creates_no_state() -> None:
                 team_id=context.team_id,
                 agent_version_id=context.agent_version.id,
                 initial_user_message="Hello",
+                idempotency_key="missing-agent",
             )
         )
 
@@ -383,6 +484,7 @@ async def test_agent_from_another_team_is_rejected() -> None:
                 team_id=context.team_id,
                 agent_version_id=context.agent_version.id,
                 initial_user_message="Hello",
+                idempotency_key="wrong-team",
             )
         )
 
@@ -412,6 +514,7 @@ async def test_invalid_message_rolls_back_created_conversation() -> None:
                 team_id=context.team_id,
                 agent_version_id=context.agent_version.id,
                 initial_user_message="   ",
+                idempotency_key="invalid-message",
             )
         )
 

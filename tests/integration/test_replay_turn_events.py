@@ -59,7 +59,14 @@ async def test_replays_postgres_events_after_exclusive_cursor(
         sleeper=NeverSleeper(),
         batch_size=1,
     )
-    observer = await service.open(turn_id=turn.id, after_sequence=1)
+    async with unit_of_work_factory() as unit_of_work:
+        conversation = await unit_of_work.conversations.get(turn.conversation_id)
+    assert conversation is not None
+    observer = await service.open(
+        team_id=conversation.team_id,
+        turn_id=turn.id,
+        after_sequence=1,
+    )
     events = [event async for event in observer]
 
     assert [event.sequence for event in events] == [2]

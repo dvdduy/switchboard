@@ -7,11 +7,15 @@ from httpx import ASGITransport, AsyncClient
 
 from switchboard.adapters.api.app import create_app
 from switchboard.adapters.api.turn_events import serialize_sse_event
-from switchboard.application.errors import TurnNotFoundError
+from switchboard.application.errors import (
+    ApplicationError,
+    TurnNotFoundError,
+    TurnTeamMismatchError,
+)
 from switchboard.application.services.readiness import ReadinessService
 from switchboard.bootstrap.config import Settings
 from switchboard.domain.execution_events import ExecutionEvent, ExecutionEventKind
-from switchboard.domain.identifiers import ExecutionEventId, TurnId
+from switchboard.domain.identifiers import ExecutionEventId, TeamId, TurnId
 
 
 class FakeReplayTurnEvents:
@@ -19,19 +23,20 @@ class FakeReplayTurnEvents:
         self,
         *,
         events: tuple[ExecutionEvent, ...] = (),
-        error: TurnNotFoundError | None = None,
+        error: ApplicationError | None = None,
     ) -> None:
         self._events = events
         self._error = error
-        self.opened: list[tuple[TurnId, int]] = []
+        self.opened: list[tuple[TeamId, TurnId, int]] = []
 
     async def open(
         self,
         *,
+        team_id: TeamId,
         turn_id: TurnId,
         after_sequence: int,
     ) -> AsyncIterator[ExecutionEvent]:
-        self.opened.append((turn_id, after_sequence))
+        self.opened.append((team_id, turn_id, after_sequence))
 
         if self._error is not None:
             raise self._error
@@ -90,17 +95,21 @@ def test_serializes_exact_compact_sse_frame() -> None:
 
 
 async def test_missing_last_event_id_uses_zero_cursor() -> None:
+    team_id = TeamId(uuid4())
     turn_id = TurnId(uuid4())
     event = make_event(turn_id=turn_id)
     replay = FakeReplayTurnEvents(events=(event,))
     transport = ASGITransport(app=make_app(replay))
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get(f"/api/v1/turns/{turn_id}/events")
+        response = await client.get(
+            f"/api/v1/turns/{turn_id}/events",
+            headers={"X-Team-ID": str(team_id)},
+        )
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/event-stream"
-    assert replay.opened == [(turn_id, 0)]
+    assert replay.opened == [(team_id, turn_id, 0)]
 
 
 @pytest.mark.parametrize(
@@ -111,13 +120,14 @@ async def test_invalid_last_event_id_fails_before_streaming(
     last_event_id: str,
 ) -> None:
     turn_id = TurnId(uuid4())
+    team_id = TeamId(uuid4())
     replay = FakeReplayTurnEvents(events=(make_event(turn_id=turn_id),))
     transport = ASGITransport(app=make_app(replay))
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(
             f"/api/v1/turns/{turn_id}/events",
-            headers={"Last-Event-ID": last_event_id},
+            headers={"X-Team-ID": str(team_id), "Last-Event-ID": last_event_id},
         )
 
     assert response.status_code == 422
@@ -126,12 +136,56 @@ async def test_invalid_last_event_id_fails_before_streaming(
 
 async def test_missing_turn_returns_404_before_streaming() -> None:
     turn_id = TurnId(uuid4())
+    team_id = TeamId(uuid4())
     replay = FakeReplayTurnEvents(error=TurnNotFoundError(f"turn {turn_id} was not found"))
+    transport = ASGITransport(app=make_app(replay))
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            f"/api/v1/turns/{turn_id}/events",
+            headers={"X-Team-ID": str(team_id)},
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {
+            "code": "resource_not_found",
+            "message": "The requested resource was not found.",
+        }
+    }
+    assert "text/event-stream" not in response.headers["content-type"]
+
+
+async def test_missing_team_header_returns_stable_error_before_streaming() -> None:
+    turn_id = TurnId(uuid4())
+    replay = FakeReplayTurnEvents(events=(make_event(turn_id=turn_id),))
     transport = ASGITransport(app=make_app(replay))
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get(f"/api/v1/turns/{turn_id}/events")
 
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_header"
+    assert response.json()["error"]["details"] == [{"field": "header.X-Team-ID", "code": "missing"}]
+    assert replay.opened == []
+
+
+async def test_cross_team_turn_uses_same_not_found_representation() -> None:
+    turn_id = TurnId(uuid4())
+    team_id = TeamId(uuid4())
+    replay = FakeReplayTurnEvents(error=TurnTeamMismatchError("private ownership detail"))
+    transport = ASGITransport(app=make_app(replay))
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            f"/api/v1/turns/{turn_id}/events",
+            headers={"X-Team-ID": str(team_id)},
+        )
+
     assert response.status_code == 404
-    assert response.json() == {"detail": f"turn {turn_id} was not found"}
-    assert "text/event-stream" not in response.headers["content-type"]
+    assert response.json() == {
+        "error": {
+            "code": "resource_not_found",
+            "message": "The requested resource was not found.",
+        }
+    }

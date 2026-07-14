@@ -16,6 +16,7 @@ AgentToolBindingId = NewType("AgentToolBindingId", UUID)
 ConversationId = NewType("ConversationId", UUID)
 MessageId = NewType("MessageId", UUID)
 ConversationSummaryId = NewType("ConversationSummaryId", UUID)
+CommandReceiptId = NewType("CommandReceiptId", UUID)
 
 TurnId = NewType("TurnId", UUID)
 TurnAttemptId = NewType("TurnAttemptId", UUID)

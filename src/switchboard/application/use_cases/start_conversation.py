@@ -6,10 +6,20 @@ from switchboard.application.errors import (
     AgentDefinitionNotFoundError,
     AgentTeamMismatchError,
     AgentVersionNotFoundError,
+    IdempotencyConflictError,
 )
 from switchboard.application.ports.clock import Clock
 from switchboard.application.ports.id_generator import IdGenerator
 from switchboard.application.ports.unit_of_work import UnitOfWorkFactory
+from switchboard.application.services.command_idempotency import (
+    fingerprint_create_conversation,
+    hash_idempotency_key,
+)
+from switchboard.domain.command_receipts import (
+    CREATE_CONVERSATION_SCOPE,
+    CommandOperation,
+    CommandReceipt,
+)
 from switchboard.domain.conversations import (
     Conversation,
     ConversationStatus,
@@ -17,6 +27,7 @@ from switchboard.domain.conversations import (
 )
 from switchboard.domain.identifiers import (
     AgentVersionId,
+    CommandReceiptId,
     ConversationId,
     MessageId,
     TeamId,
@@ -38,6 +49,7 @@ class StartConversationCommand:
     team_id: TeamId
     agent_version_id: AgentVersionId
     initial_user_message: str
+    idempotency_key: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +74,7 @@ class StartConversation:
         message_ids: IdGenerator[MessageId],
         turn_ids: IdGenerator[TurnId],
         attempt_ids: IdGenerator[TurnAttemptId],
+        receipt_ids: IdGenerator[CommandReceiptId],
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._clock = clock
@@ -69,6 +82,7 @@ class StartConversation:
         self._message_ids = message_ids
         self._turn_ids = turn_ids
         self._attempt_ids = attempt_ids
+        self._receipt_ids = receipt_ids
 
     async def execute(
         self,
@@ -76,7 +90,40 @@ class StartConversation:
     ) -> StartConversationResult:
         """Execute the atomic start-conversation transaction."""
 
+        idempotency_key_hash = hash_idempotency_key(command.idempotency_key)
+        request_fingerprint = fingerprint_create_conversation(
+            team_id=command.team_id,
+            agent_version_id=command.agent_version_id,
+            initial_user_message=command.initial_user_message,
+        )
+        created_at = self._clock.now()
+        conversation_id = self._conversation_ids.new()
+        message_id = self._message_ids.new()
+        turn_id = self._turn_ids.new()
+        attempt_id = self._attempt_ids.new()
+        receipt = CommandReceipt(
+            id=self._receipt_ids.new(),
+            team_id=command.team_id,
+            operation=CommandOperation.CREATE_CONVERSATION,
+            command_scope=CREATE_CONVERSATION_SCOPE,
+            idempotency_key_hash=idempotency_key_hash,
+            request_fingerprint=request_fingerprint,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            turn_id=turn_id,
+            attempt_id=attempt_id,
+            created_at=created_at,
+        )
+
         async with self._unit_of_work_factory() as unit_of_work:
+            authority, created = await unit_of_work.command_receipts.add_or_get(receipt)
+            if not authority.has_same_request(request_fingerprint):
+                raise IdempotencyConflictError(
+                    "idempotency key was already used for a different request"
+                )
+            if not created:
+                return _result_from_receipt(authority)
+
             agent_version = await unit_of_work.agents.get_version(command.agent_version_id)
 
             if agent_version is None:
@@ -97,13 +144,6 @@ class StartConversation:
                 raise AgentTeamMismatchError(
                     f"selected agent version does not belong to team {command.team_id}"
                 )
-
-            created_at = self._clock.now()
-
-            conversation_id = self._conversation_ids.new()
-            message_id = self._message_ids.new()
-            turn_id = self._turn_ids.new()
-            attempt_id = self._attempt_ids.new()
 
             conversation = Conversation(
                 id=conversation_id,
@@ -147,9 +187,13 @@ class StartConversation:
 
             await unit_of_work.commit()
 
-        return StartConversationResult(
-            conversation_id=conversation_id,
-            message_id=message_id,
-            turn_id=turn_id,
-            attempt_id=attempt_id,
-        )
+        return _result_from_receipt(receipt)
+
+
+def _result_from_receipt(receipt: CommandReceipt) -> StartConversationResult:
+    return StartConversationResult(
+        conversation_id=receipt.conversation_id,
+        message_id=receipt.message_id,
+        turn_id=receipt.turn_id,
+        attempt_id=receipt.attempt_id,
+    )

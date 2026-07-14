@@ -6,6 +6,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from switchboard import __version__
+from switchboard.adapters.api.conversations import create_conversation_router
+from switchboard.adapters.api.dependencies import ConversationApiServices
+from switchboard.adapters.api.errors import install_v1_error_handlers
 from switchboard.adapters.api.health import create_health_router
 from switchboard.adapters.api.turn_events import create_turn_events_router
 from switchboard.application.services.readiness import ReadinessService
@@ -20,6 +23,7 @@ def create_app(
     readiness_service: ReadinessService,
     close_resources: CloseResources | None = None,
     replay_turn_events: ReplayTurnEvents | None = None,
+    conversation_api_services: ConversationApiServices | None = None,
 ) -> FastAPI:
     """Create and configure the Switchboard API."""
 
@@ -42,7 +46,11 @@ def create_app(
     )
 
     app.state.settings = settings
+    install_v1_error_handlers(app)
     app.include_router(create_health_router(readiness_service))
+
+    if conversation_api_services is not None:
+        app.include_router(create_conversation_router(conversation_api_services))
 
     if replay_turn_events is not None:
         app.include_router(create_turn_events_router(replay_turn_events))

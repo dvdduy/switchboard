@@ -5,8 +5,28 @@ class ApplicationError(Exception):
     """Base class for application workflow failures."""
 
 
+class InvalidIdempotencyKeyError(ApplicationError):
+    """Raised when an idempotency key violates the public command contract."""
+
+
+class IdempotencyConflictError(ApplicationError):
+    """Raised when an idempotency authority is reused for different content."""
+
+
 class ConversationNotFoundError(ApplicationError):
     """Raised when an operation requires a missing conversation."""
+
+
+class ConversationTeamMismatchError(ApplicationError):
+    """Raised when a conversation does not belong to the requesting team."""
+
+
+class ConversationClosedError(ApplicationError):
+    """Raised when a command tries to append to a closed conversation."""
+
+
+class PaginationValidationError(ApplicationError):
+    """Raised when a public read cursor or page size is outside its bounds."""
 
 
 class MessageNotFoundError(ApplicationError):
@@ -27,6 +47,10 @@ class AgentTeamMismatchError(ApplicationError):
 
 class TurnNotFoundError(ApplicationError):
     """Raised when an operation requires a missing turn."""
+
+
+class TurnTeamMismatchError(ApplicationError):
+    """Raised when a turn does not belong to the requesting team."""
 
 
 class TurnAttemptNotFoundError(ApplicationError):

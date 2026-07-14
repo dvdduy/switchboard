@@ -2,11 +2,11 @@
 
 from collections.abc import AsyncIterator
 
-from switchboard.application.errors import TurnNotFoundError
+from switchboard.application.errors import TurnNotFoundError, TurnTeamMismatchError
 from switchboard.application.ports.sleeper import AsyncSleeper
 from switchboard.application.ports.unit_of_work import UnitOfWorkFactory
 from switchboard.domain.execution_events import ExecutionEvent
-from switchboard.domain.identifiers import TurnId
+from switchboard.domain.identifiers import TeamId, TurnId
 
 
 class ReplayTurnEvents:
@@ -34,6 +34,7 @@ class ReplayTurnEvents:
     async def open(
         self,
         *,
+        team_id: TeamId,
         turn_id: TurnId,
         after_sequence: int,
     ) -> AsyncIterator[ExecutionEvent]:
@@ -44,9 +45,11 @@ class ReplayTurnEvents:
 
         async with self._unit_of_work_factory() as unit_of_work:
             turn = await unit_of_work.turns.get(turn_id)
-
-        if turn is None:
-            raise TurnNotFoundError(f"turn {turn_id} was not found")
+            if turn is None:
+                raise TurnNotFoundError(f"turn {turn_id} was not found")
+            conversation = await unit_of_work.conversations.get(turn.conversation_id)
+            if conversation is None or conversation.team_id != team_id:
+                raise TurnTeamMismatchError(f"turn does not belong to team {team_id}")
 
         return self._iterate(
             turn_id=turn_id,

@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from switchboard.adapters.api.dependencies import (
+    ConversationApiServices,
+    build_conversation_api_services,
+)
 from switchboard.adapters.cache.redis_health import RedisHealthProbe
 from switchboard.adapters.persistence.postgres_health import (
     PostgresHealthProbe,
@@ -33,6 +37,7 @@ class RuntimeResources:
     redis_client: Redis
     readiness_service: ReadinessService
     replay_turn_events: ReplayTurnEvents
+    conversation_api_services: ConversationApiServices
 
     async def close(self) -> None:
         """Close all runtime-owned resources."""
@@ -72,6 +77,7 @@ def build_runtime_resources(settings: Settings) -> RuntimeResources:
         unit_of_work_factory=unit_of_work_factory,
         sleeper=AsyncioSleeper(),
     )
+    conversation_api_services = build_conversation_api_services(unit_of_work_factory)
 
     return RuntimeResources(
         database_engine=database_engine,
@@ -80,4 +86,5 @@ def build_runtime_resources(settings: Settings) -> RuntimeResources:
         redis_client=redis_client,
         readiness_service=readiness_service,
         replay_turn_events=replay_turn_events,
+        conversation_api_services=conversation_api_services,
     )

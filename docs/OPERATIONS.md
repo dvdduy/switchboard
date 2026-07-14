@@ -37,6 +37,29 @@ These are project objectives, not production promises:
 - All committed stream events remain replayable.
 - Canary rollback occurs within 60 seconds of a sustained configured breach.
 
+The current implementation does not yet substantiate the accepted-turn loss or
+canary objectives in production terms: API acceptance is durable, but automatic
+dispatch and recovery require a transactional outbox and worker claiming.
+
+## Day 6 API operations
+
+- Apply migrations with `uv run alembic upgrade head` before starting the API.
+- Supply `X-Team-ID` on all conversation, turn, history, and event requests.
+  This header is development identity only and must be replaced by production
+  authentication and authorization.
+- Supply a unique opaque `Idempotency-Key` for each logical create or continue
+  command. Safe retries reuse the exact key and exact request.
+- A `202` response proves durable acceptance, not execution start. Until outbox
+  dispatch exists, accepted turns remain `received` unless an explicit runner
+  processes them.
+- `409 idempotency_conflict` means a key was reused with different content;
+  generate a new key only for a genuinely new command.
+- `404 resource_not_found` intentionally does not distinguish unknown resources
+  from cross-team resources.
+- Message history is bounded to 100 items per request and advances with the
+  exclusive `after_sequence` cursor.
+- Redis is not required for API command correctness or event replay.
+
 ## Structured telemetry
 
 Every event carries correlation identifiers:

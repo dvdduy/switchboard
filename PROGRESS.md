@@ -4,8 +4,8 @@
 
 - **Current phase:** Phase 1 — Conversation Platform Foundations
 - **Current milestone:** Milestone 1 — Conversation platform
-- **Completed through:** Day 5
-- **Next session:** Day 6 — Shared conversation API
+- **Completed through:** Day 6
+- **Next session:** Day 7 — LangGraph agent loop
 
 ## Progress log
 
@@ -16,7 +16,8 @@
 | 2 | Complete | Conversation history versus logical turns and physical attempts; transaction and ordering invariants | Versioned agents, conversations, immutable messages, turns, attempts, Alembic, repositories, UoW, atomic `StartConversation` | PostgreSQL migration, rollback, constraint, persistence, and concurrent-append tests | `feat(conversations): add durable conversation and turn model` | Explain deterministic per-conversation ordering, version pinning, and atomic durable turn creation | No execution events, outbox, streaming API, or worker dispatch yet |
 | 3 | Complete | SSE as a delivery view over a durable event log | Immutable execution events, deterministic simulator, replay-then-tail service, reconnectable SSE | Ruff, mypy, 103 tests, PostgreSQL integration tests, migration round-trip, container build | Pending approval: `feat(streaming): add durable reconnectable turn event stream` | Explain committed-event replay, exclusive reconnect cursors, and why transport disconnect is not cancellation | No outbox, durable worker recovery, real provider, Redis notification optimization, retention policy, or production chunk tuning |
 | 4 | Complete | Context windows as explicit product/reliability budgets; summaries as lossy derived artifacts with provenance | Immutable agent-version context policies, deterministic bounded assembler, durable prefix summaries, compatible reuse workflow | Ruff, mypy, 163 tests, PostgreSQL reconstruction and migration round-trip, container build | Pending approval: `feat(context): add token-budgeted conversation context management` | Explain turn-pinned context snapshots, mandatory recent context, summary provenance, and why summarization runs outside transactions | No production tokenizer or semantic summarizer, summary chaining/retention, large-history optimization, or model-loop integration |
-| 5 | Complete | A registry is a versioned safety contract; schema validation does not replace behavioral conformance | Team-owned tool definitions, immutable manifests, separate CAS lifecycle state, conformance history, immutable agent bindings, reference adapters, eligible query | Ruff, mypy, 216 tests, PostgreSQL migration/concurrency coverage, migration round-trip, container build | Pending approval: `feat(tools): add versioned registry and conformance gates` | Explain immutable content versus mutable lifecycle, exact-version activation evidence, and safe idempotent adapter contracts | No runtime authorization/health filtering, public registry API, production HTTP/MCP/queue adapters, durable dispatch/recovery, or conformance retention/telemetry policy |
+| 5 | Complete | A registry is a versioned safety contract; schema validation does not replace behavioral conformance | Team-owned tool definitions, immutable manifests, separate CAS lifecycle state, conformance history, immutable agent bindings, reference adapters, eligible query | Ruff, mypy, 216 tests, PostgreSQL migration/concurrency coverage, migration round-trip, container build | `d08a776` — `feat(tools): add versioned registry and conformance gates` | Explain immutable content versus mutable lifecycle, exact-version activation evidence, and safe idempotent adapter contracts | No runtime authorization/health filtering, public registry API, production HTTP/MCP/queue adapters, durable dispatch/recovery, or conformance retention/telemetry policy |
+| 6 | Complete | Public API contracts require durable acceptance, boundary idempotency, stable errors, and ownership-safe reads | Versioned create/continue commands, command receipts, ordered history, turn inspection, team-aware SSE, strict DTOs and OpenAPI | Ruff, mypy, 284 tests, PostgreSQL contract/concurrency coverage, migration round-trip, container build | Pending approval: `feat(api): add versioned conversation commands and history` | Explain why `202` means durable acceptance rather than execution, how database receipt uniqueness handles retries, and why external-client contracts do not expose persistence models | No production auth, rate limits/quotas, automatic outbox dispatch, durable worker claiming/recovery, or receipt/history retention policy |
 
 ## Milestones
 
@@ -46,7 +47,7 @@
 - [x] SSE streaming
 - [x] Context-window management
 - [x] Tool registry and conformance
-- [ ] Shared conversation API
+- [x] Shared conversation API
 - [ ] Orchestration adapter
 - [ ] Policy and approval
 - [ ] Phase integration
@@ -99,11 +100,20 @@
   separately through revision compare-and-set updates.
 - Require successful conformance for the exact version before activation and
   clone agent versions when adding exact tool-version bindings.
+- Treat public command acceptance as a PostgreSQL transaction over the command
+  receipt, message, turn, and pending attempt; `202` does not imply execution.
+- Use hashed idempotency keys plus canonical request fingerprints, with receipt
+  uniqueness as the duplicate-command concurrency authority.
+- Require explicit development team context on conversation and event APIs,
+  while documenting that it is not production authentication.
 
 ## Known debt
 
-- The public API exposes health/readiness and read-only turn-event SSE; public
-  create/continue-conversation commands do not exist yet.
+- Development `X-Team-ID` ownership context is not production authentication or
+  authorization; rate limits and quotas are also absent.
+- Accepted conversation commands are not automatically dispatched because no
+  transactional outbox or durable worker claiming exists.
+- Command-receipt and public history retention policies are not defined.
 - No transactional outbox exists yet.
 - No durable worker claiming or recovery exists yet.
 - Event observers poll PostgreSQL before a future Redis notification optimization.

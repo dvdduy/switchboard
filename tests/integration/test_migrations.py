@@ -10,6 +10,7 @@ EXPECTED_DOMAIN_TABLES = {
     "agent_tool_bindings",
     "agent_definitions",
     "agent_versions",
+    "command_receipts",
     "conversations",
     "conversation_summaries",
     "messages",
