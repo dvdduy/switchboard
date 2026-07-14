@@ -4,8 +4,8 @@
 
 - **Current phase:** Phase 1 — Conversation Platform Foundations
 - **Current milestone:** Milestone 1 — Conversation platform
-- **Completed through:** Day 3
-- **Next session:** Day 4 — Context window management
+- **Completed through:** Day 4
+- **Next session:** Day 5 — Tool registry
 
 ## Progress log
 
@@ -15,6 +15,7 @@
 | 1 | Complete | Modular monolith, ports/adapters, API versus worker lifecycle | Python 3.13 scaffold, FastAPI health/readiness, separate worker, PostgreSQL, Redis, Docker, CI | Ruff, mypy, pytest, architecture tests, container build | `chore(scaffold): establish Switchboard API, worker, and local infrastructure` | Explain why durable work is separated from the HTTP process and frameworks remain outside the domain | No product API beyond health endpoints |
 | 2 | Complete | Conversation history versus logical turns and physical attempts; transaction and ordering invariants | Versioned agents, conversations, immutable messages, turns, attempts, Alembic, repositories, UoW, atomic `StartConversation` | PostgreSQL migration, rollback, constraint, persistence, and concurrent-append tests | `feat(conversations): add durable conversation and turn model` | Explain deterministic per-conversation ordering, version pinning, and atomic durable turn creation | No execution events, outbox, streaming API, or worker dispatch yet |
 | 3 | Complete | SSE as a delivery view over a durable event log | Immutable execution events, deterministic simulator, replay-then-tail service, reconnectable SSE | Ruff, mypy, 103 tests, PostgreSQL integration tests, migration round-trip, container build | Pending approval: `feat(streaming): add durable reconnectable turn event stream` | Explain committed-event replay, exclusive reconnect cursors, and why transport disconnect is not cancellation | No outbox, durable worker recovery, real provider, Redis notification optimization, retention policy, or production chunk tuning |
+| 4 | Complete | Context windows as explicit product/reliability budgets; summaries as lossy derived artifacts with provenance | Immutable agent-version context policies, deterministic bounded assembler, durable prefix summaries, compatible reuse workflow | Ruff, mypy, 163 tests, PostgreSQL reconstruction and migration round-trip, container build | Pending approval: `feat(context): add token-budgeted conversation context management` | Explain turn-pinned context snapshots, mandatory recent context, summary provenance, and why summarization runs outside transactions | No production tokenizer or semantic summarizer, summary chaining/retention, large-history optimization, or model-loop integration |
 
 ## Milestones
 
@@ -42,7 +43,7 @@
 - [x] Durable conversation, turn, and attempt model
 - [x] Durable execution-event model
 - [x] SSE streaming
-- [ ] Context-window management
+- [x] Context-window management
 - [ ] Tool registry and conformance
 - [ ] Shared conversation API
 - [ ] Orchestration adapter
@@ -87,6 +88,12 @@
   `Last-Event-ID` as an exclusive cursor.
 - Poll with short independent transactions; Redis notification remains an
   optional future latency optimization rather than a correctness dependency.
+- Pin typed context budgets to immutable agent versions and reconstruct a turn
+  only through its input-message sequence.
+- Treat summaries as immutable derived prefix artifacts with explicit coverage
+  and version provenance, never as visible messages or authorization evidence.
+- Run summarization outside database transactions and use a uniqueness-backed
+  insert/re-read to select one concurrent authority winner.
 
 ## Known debt
 
@@ -97,6 +104,11 @@
 - Event observers poll PostgreSQL before a future Redis notification optimization.
 - Durable execution uses a deterministic simulator rather than a real model provider.
 - Execution-event retention and production chunk-size tuning are not defined yet.
-- Agent versions do not yet contain prompt, model, tool, router, and policy configuration.
+- Agent versions do not yet contain prompt, model, tool, router, and policy-bundle configuration.
+- Context counting and summarization are deterministic development strategies,
+  not production-provider tokenization or semantic summarization.
+- Summary chaining, retention/deletion, and large-history performance policy are
+  not defined.
+- Context reconstruction is not yet connected to a real model orchestration loop.
 - Tenant ownership is validated by the application rather than complete composite tenant constraints.
 - Message append-only behavior is enforced by domain/repository convention, not database permissions.

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Protocol
 
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.context import ConversationSummary
 from switchboard.domain.conversations import Conversation, Message, MessageRole
 from switchboard.domain.execution_events import (
     ExecutionEvent,
@@ -76,11 +77,48 @@ class ConversationRepository(Protocol):
     ) -> Message:
         """Lock the conversation and append its next ordered message."""
 
+    async def get_message(
+        self,
+        *,
+        conversation_id: ConversationId,
+        message_id: MessageId,
+    ) -> Message | None:
+        """Return a message only when it belongs to the conversation."""
+
     async def list_messages(
         self,
         conversation_id: ConversationId,
     ) -> tuple[Message, ...]:
         """Return committed messages in deterministic sequence order."""
+
+    async def list_messages_through(
+        self,
+        *,
+        conversation_id: ConversationId,
+        through_sequence: int,
+    ) -> tuple[Message, ...]:
+        """Return committed messages through an inclusive sequence cutoff."""
+
+
+class ConversationSummaryRepository(Protocol):
+    """Persistence operations for immutable derived conversation summaries."""
+
+    async def add_if_absent(
+        self,
+        summary: ConversationSummary,
+    ) -> ConversationSummary:
+        """Persist a summary or return the concurrent authority winner."""
+
+    async def get_latest_compatible(
+        self,
+        *,
+        conversation_id: ConversationId,
+        agent_version_id: AgentVersionId,
+        through_sequence: int,
+        summarizer_version: str,
+        token_counter_version: str,
+    ) -> ConversationSummary | None:
+        """Return the newest compatible prefix not beyond the cutoff."""
 
 
 class TurnRepository(Protocol):

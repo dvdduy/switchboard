@@ -5,6 +5,7 @@ from switchboard.adapters.persistence.unit_of_work import (
     SqlAlchemyUnitOfWorkFactory,
 )
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.context import ContextPolicy
 from switchboard.domain.conversations import Conversation, ConversationStatus, MessageRole
 from switchboard.domain.identifiers import (
     AgentDefinitionId,
@@ -41,6 +42,7 @@ async def seed_turn(
         id=AgentVersionId(uuid4()),
         agent_definition_id=definition.id,
         version_number=1,
+        context_policy=ContextPolicy(4096, 512, 256, 256, 1),
         created_at=now,
     )
 

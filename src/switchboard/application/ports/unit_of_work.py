@@ -6,6 +6,7 @@ from typing import Protocol, Self
 from switchboard.application.ports.repositories import (
     AgentRepository,
     ConversationRepository,
+    ConversationSummaryRepository,
     TurnRepository,
 )
 
@@ -15,6 +16,7 @@ class UnitOfWork(Protocol):
 
     agents: AgentRepository
     conversations: ConversationRepository
+    summaries: ConversationSummaryRepository
     turns: TurnRepository
 
     async def __aenter__(self) -> Self:

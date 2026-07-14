@@ -20,6 +20,7 @@ from switchboard.application.use_cases.start_conversation import (
     StartConversationResult,
 )
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.context import ContextPolicy
 from switchboard.domain.conversations import (
     Conversation,
     ConversationStatus,
@@ -93,6 +94,7 @@ async def seed_agent(
         id=AgentVersionId(uuid4()),
         agent_definition_id=definition.id,
         version_number=1,
+        context_policy=ContextPolicy(4096, 512, 256, 256, 1),
         created_at=created_at,
     )
 

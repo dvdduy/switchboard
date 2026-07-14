@@ -8,7 +8,8 @@ The current implementation provides:
 - durable logical turns and physical attempts;
 - immutable PostgreSQL execution events with deterministic per-turn ordering;
 - deterministic simulated assistant execution;
-- reconnectable read-only SSE replay and tailing.
+- reconnectable read-only SSE replay and tailing;
+- turn-pinned, token-budgeted context assembly with durable prefix summaries.
 
 Planned capabilities include:
 
@@ -85,6 +86,20 @@ Frames use the durable turn-local sequence as `id`, a stable platform event name
 as `event`, and a compact JSON payload as `data`. Disconnecting the observer does
 not cancel or mutate the turn.
 
+## Context management
+
+Each immutable agent version declares its model-window budget, reserved output,
+fixed instruction/tool overhead, maximum summary size, and minimum recent
+message count. Context reconstruction reads only through the selected turn's
+input message, preserves the current input and configured recent floor, and
+uses a durable provenance-bearing summary for an omitted older prefix.
+
+The counter and summarizer boundaries are provider-independent. The included
+summarizer is deterministic and extractive for development and tests; it is not
+a production model tokenizer or semantic-memory system. Context reconstruction
+is currently an application workflow and is not exposed as a public endpoint or
+connected to a real model loop.
+
 ## Quality gate
 
 ```bash
@@ -95,6 +110,7 @@ uv run pytest
 docker build --tag switchboard:local .
 ```
 
-Day 3 intentionally does not include a transactional outbox, durable worker
-claiming/recovery, a real model provider, Redis event notification, event
-retention policy, or production chunk-size tuning.
+The current phase intentionally does not include a transactional outbox,
+durable worker claiming/recovery, a real model provider, Redis event
+notification, event or summary retention policies, production chunk-size
+tuning, production tokenizers, semantic summarization, or summary chaining.

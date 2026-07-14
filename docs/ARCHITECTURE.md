@@ -23,7 +23,7 @@ flowchart LR
 ## Target container view
 
 This diagram includes later outbox, model, tool, evaluation, and rollout
-components. The current Day 3 deployment subset is listed below.
+components. The current Day 4 deployment subset is listed below.
 
 ```mermaid
 flowchart TB
@@ -99,8 +99,8 @@ src/switchboard/
 ## Target runtime turn flow
 
 The following end-to-end outbox, worker, routing, policy, tool, and model flow is
-the target architecture; Day 3 implements only the durable event/simulator and
-SSE delivery subset described in the implementation notes below.
+the target architecture; Days 3–4 implement the durable event/SSE subset and
+the provider-independent context assembly boundary described below.
 
 ```mermaid
 sequenceDiagram
@@ -231,6 +231,33 @@ notification-assisted polling remains a future optimization.
 one observer does not mutate execution or affect another observer. Production
 retention and chunk-size tuning remain undefined.
 
+## Context management
+
+Every immutable `AgentVersion` owns a typed `ContextPolicy`: total model-window
+tokens, reserved output, fixed instruction/tool overhead, maximum summary size,
+and a mandatory recent-message floor. The application computes conversation
+capacity as the model window minus reserved output and fixed overhead. It fails
+explicitly when mandatory context cannot fit.
+
+`BuildTurnContext` reconstructs a turn from messages only through that turn's
+input-message sequence. A deterministic assembler keeps the newest contiguous
+suffix and, when required, represents the omitted prefix with an immutable
+`ConversationSummary`. Summaries start at sequence 1 and record conversation,
+agent version, coverage, summarizer version, token-counter version, token count,
+and creation time. They are derived artifacts, not visible conversation
+messages or authorization evidence.
+
+Snapshot reads, compatible-summary lookup, summarization, and summary writes use
+separate boundaries. No database transaction remains open while a summarizer is
+running. PostgreSQL uniqueness selects one authoritative artifact when
+concurrent builders summarize the same provenance and coverage. The application
+validates tenant ownership before reading or creating summaries.
+
+The token counter and summarizer are ports. The current local summarizer is a
+deterministic extractive simulator, not a production tokenizer or model-backed
+semantic summarizer. Context construction is not yet wired into a real model
+orchestration loop.
+
 ## Persistence ownership
 
 - PostgreSQL: source of truth for configuration, conversation, execution, approval, audit, eval, and release state.
@@ -278,7 +305,7 @@ Only when measurement justifies it:
 No microservice split is required merely to demonstrate seniority.
 
 
-## Implementation status after Day 3
+## Implementation status after Day 4
 
 Implemented:
 
@@ -298,6 +325,13 @@ Implemented:
 - framework-independent replay-then-tail polling over short transactions;
 - reconnectable SSE with exact event IDs/types, compact JSON payloads, preflight
   validation, terminal closure, and independent observers.
+- typed immutable context policies pinned to agent versions;
+- durable prefix summaries with relational coverage, ownership, provenance, and
+  concurrency authority constraints;
+- deterministic bounded context selection that preserves the current input and
+  configured recent-message floor;
+- turn-pinned message cutoffs, compatible summary reuse, and short-transaction
+  summary creation through provider-independent ports.
 
 Planned but not yet implemented:
 
@@ -307,5 +341,8 @@ Planned but not yet implemented:
 - real model-provider execution;
 - Redis-assisted event notification;
 - event retention and production chunk-size tuning;
-- context management, tool routing, policies, approvals, model adapters,
-  evaluation, and rollout control.
+- production tokenizers and semantic summarizers;
+- summary chaining, retention, deletion, and large-history optimization;
+- context integration into model orchestration;
+- tool routing, policies, approvals, model adapters, evaluation, and rollout
+  control.

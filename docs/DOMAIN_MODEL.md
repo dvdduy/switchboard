@@ -12,6 +12,7 @@ classDiagram
     class ToolBinding
     class Conversation
     class Message
+    class ConversationSummary
     class TurnExecution
     class ExecutionEvent
     class RoutingDecision
@@ -33,6 +34,8 @@ classDiagram
     ToolBinding "*" --> "1" ToolVersion
     AgentVersion "1" --> "*" Conversation
     Conversation "1" --> "*" Message
+    Conversation "1" --> "*" ConversationSummary
+    AgentVersion "1" --> "*" ConversationSummary
     Conversation "1" --> "*" TurnExecution
     TurnExecution "1" --> "*" ExecutionEvent
     TurnExecution "1" --> "0..1" RoutingDecision
@@ -67,6 +70,11 @@ Immutable executable configuration.
 **Contains:** prompt reference/content hash, model configuration, context policy, router configuration, policy bundle version, tool bindings, token/cost budgets.  
 **Invariant:** Published versions are immutable and content-addressable or uniquely sequenced.
 
+The implemented Day 4 subset persists a typed `ContextPolicy` containing model
+window, reserved output, fixed overhead, maximum summary size, and minimum
+recent-message count. Prompt, model, tool, router, and policy-bundle fields
+remain target capabilities.
+
 ### ToolDefinition
 
 Stable identity and ownership of a tool capability.
@@ -87,6 +95,21 @@ Long-lived interaction pinned to one `AgentVersion` for the initial design.
 ### Message
 
 User, assistant, tool, or system-visible message record. Raw confidential model reasoning is not a message type.
+
+The current implementation supports user and assistant roles. Messages are
+immutable and ordered by a positive conversation-local sequence.
+
+### ConversationSummary
+
+Immutable derived representation of an older conversation prefix. It records
+conversation and agent-version identity, inclusive coverage, content, estimated
+tokens, summarizer version, token-counter version, and creation time.
+
+**Invariant:** Phase 1 coverage is exactly `[1, through_sequence]`; endpoints
+must be messages from the same conversation. One authoritative artifact exists
+for the same conversation, agent version, coverage, summarizer version, and
+token-counter version. A summary does not replace or mutate visible messages and
+does not contain private model reasoning.
 
 ### TurnExecution
 
@@ -166,6 +189,8 @@ Release identifies a candidate configuration bundle. Deployment records stage, t
 8. Critical state is persisted before an externally visible event is acknowledged.
 9. Execution events are append-only.
 10. Eval and release decisions identify their exact input versions.
+11. Context for a turn reads no message after that turn's input-message sequence.
+12. Mandatory recent context is never silently dropped to satisfy a token budget.
 
 ## Open design questions to resolve during development
 
@@ -176,16 +201,18 @@ Release identifies a candidate configuration bundle. Deployment records stage, t
 - How long should approval requests and execution events be retained?
 
 
-## Implementation status after Day 3
+## Implementation status after Day 4
 
 Implemented durable entities:
 
 ```text
 AgentDefinition
 └── AgentVersion
+    └── ContextPolicy
 
 Conversation
 ├── Message
+├── ConversationSummary
 └── Turn
     ├── TurnAttempt
     └── ExecutionEvent
@@ -209,8 +236,18 @@ Implemented invariants:
 - assistant output and terminal success are committed atomically;
 - partial simulated output remains replayable before a durable failure event;
 - SSE replay uses an exclusive cursor and delivers committed events only.
+- context policies are immutable and pinned through each turn's agent version;
+- context reads stop at the turn input-message sequence;
+- bounded assembly preserves the current input and configured recent floor;
+- omitted older history is represented by a provenance-bearing prefix summary;
+- summary coverage endpoints belong to the same conversation;
+- concurrent summary creation converges on one authoritative artifact;
+- summarization runs outside database transactions and failed or cancelled
+  summarization persists no partial artifact.
 
 Not implemented yet: transactional outbox dispatch, durable worker claiming and
 recovery, real model-provider execution, Redis event notifications, event
-retention, production chunk tuning, routing decisions, approvals, tool
-invocations, evaluation entities, and release entities.
+retention, production chunk tuning, production token counting, semantic
+summarization, summary retention/chaining, model-loop context integration,
+routing decisions, approvals, tool invocations, evaluation entities, and
+release entities.

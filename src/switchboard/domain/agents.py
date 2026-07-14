@@ -8,6 +8,7 @@ from switchboard.domain.common import (
     require_not_blank,
     require_positive,
 )
+from switchboard.domain.context import ContextPolicy
 from switchboard.domain.identifiers import (
     AgentDefinitionId,
     AgentVersionId,
@@ -47,6 +48,7 @@ class AgentVersion:
     id: AgentVersionId
     agent_definition_id: AgentDefinitionId
     version_number: int
+    context_policy: ContextPolicy
     created_at: datetime
 
     def __post_init__(self) -> None:

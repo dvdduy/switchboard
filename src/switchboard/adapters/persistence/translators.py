@@ -6,6 +6,7 @@ from typing import Protocol, cast
 from uuid import UUID
 
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.context import ContextPolicy, ConversationSummary
 from switchboard.domain.conversations import (
     Conversation,
     ConversationStatus,
@@ -20,6 +21,7 @@ from switchboard.domain.identifiers import (
     AgentDefinitionId,
     AgentVersionId,
     ConversationId,
+    ConversationSummaryId,
     ExecutionEventId,
     MessageId,
     TeamId,
@@ -69,6 +71,11 @@ def agent_version_to_record(
         "id": version.id,
         "agent_definition_id": version.agent_definition_id,
         "version_number": version.version_number,
+        "model_window_tokens": version.context_policy.model_window_tokens,
+        "reserved_output_tokens": version.context_policy.reserved_output_tokens,
+        "fixed_overhead_tokens": version.context_policy.fixed_overhead_tokens,
+        "summary_max_tokens": version.context_policy.summary_max_tokens,
+        "minimum_recent_messages": version.context_policy.minimum_recent_messages,
         "created_at": version.created_at,
     }
 
@@ -80,6 +87,47 @@ def agent_version_from_record(
         id=AgentVersionId(cast(UUID, record["id"])),
         agent_definition_id=AgentDefinitionId(cast(UUID, record["agent_definition_id"])),
         version_number=cast(int, record["version_number"]),
+        context_policy=ContextPolicy(
+            model_window_tokens=cast(int, record["model_window_tokens"]),
+            reserved_output_tokens=cast(int, record["reserved_output_tokens"]),
+            fixed_overhead_tokens=cast(int, record["fixed_overhead_tokens"]),
+            summary_max_tokens=cast(int, record["summary_max_tokens"]),
+            minimum_recent_messages=cast(int, record["minimum_recent_messages"]),
+        ),
+        created_at=cast(datetime, record["created_at"]),
+    )
+
+
+def conversation_summary_to_record(
+    summary: ConversationSummary,
+) -> dict[str, object]:
+    return {
+        "id": summary.id,
+        "conversation_id": summary.conversation_id,
+        "agent_version_id": summary.agent_version_id,
+        "from_sequence": summary.from_sequence,
+        "through_sequence": summary.through_sequence,
+        "content": summary.content,
+        "estimated_token_count": summary.estimated_token_count,
+        "summarizer_version": summary.summarizer_version,
+        "token_counter_version": summary.token_counter_version,
+        "created_at": summary.created_at,
+    }
+
+
+def conversation_summary_from_record(
+    record: Record,
+) -> ConversationSummary:
+    return ConversationSummary(
+        id=ConversationSummaryId(cast(UUID, record["id"])),
+        conversation_id=ConversationId(cast(UUID, record["conversation_id"])),
+        agent_version_id=AgentVersionId(cast(UUID, record["agent_version_id"])),
+        from_sequence=cast(int, record["from_sequence"]),
+        through_sequence=cast(int, record["through_sequence"]),
+        content=cast(str, record["content"]),
+        estimated_token_count=cast(int, record["estimated_token_count"]),
+        summarizer_version=cast(str, record["summarizer_version"]),
+        token_counter_version=cast(str, record["token_counter_version"]),
         created_at=cast(datetime, record["created_at"]),
     )
 

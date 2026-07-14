@@ -11,11 +11,13 @@ from sqlalchemy.ext.asyncio import (
 from switchboard.adapters.persistence.repositories import (
     SqlAlchemyAgentRepository,
     SqlAlchemyConversationRepository,
+    SqlAlchemyConversationSummaryRepository,
     SqlAlchemyTurnRepository,
 )
 from switchboard.application.ports.repositories import (
     AgentRepository,
     ConversationRepository,
+    ConversationSummaryRepository,
     TurnRepository,
 )
 
@@ -31,6 +33,9 @@ class SqlAlchemyUnitOfWork:
 
         self.agents: AgentRepository = SqlAlchemyAgentRepository(self._session)
         self.conversations: ConversationRepository = SqlAlchemyConversationRepository(self._session)
+        self.summaries: ConversationSummaryRepository = SqlAlchemyConversationSummaryRepository(
+            self._session
+        )
         self.turns: TurnRepository = SqlAlchemyTurnRepository(self._session)
 
     async def __aenter__(self) -> Self:

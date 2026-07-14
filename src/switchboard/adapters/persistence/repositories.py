@@ -4,12 +4,14 @@ from collections.abc import Mapping
 from datetime import datetime
 
 from sqlalchemy import insert, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from switchboard.adapters.persistence.schema import (
     agent_definitions,
     agent_versions,
+    conversation_summaries,
     conversations,
     execution_events,
     messages,
@@ -22,6 +24,8 @@ from switchboard.adapters.persistence.translators import (
     agent_version_from_record,
     agent_version_to_record,
     conversation_from_record,
+    conversation_summary_from_record,
+    conversation_summary_to_record,
     conversation_to_record,
     execution_event_from_record,
     execution_event_to_record,
@@ -40,6 +44,7 @@ from switchboard.application.errors import (
     TurnNotFoundError,
 )
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.context import ConversationSummary
 from switchboard.domain.conversations import Conversation, Message, MessageRole
 from switchboard.domain.execution_events import (
     ExecutionEvent,
@@ -204,6 +209,102 @@ class SqlAlchemyConversationRepository:
         result = await self._session.execute(statement)
 
         return tuple(message_from_record(record) for record in result.mappings())
+
+    async def get_message(
+        self,
+        *,
+        conversation_id: ConversationId,
+        message_id: MessageId,
+    ) -> Message | None:
+        statement = select(messages).where(
+            messages.c.conversation_id == conversation_id,
+            messages.c.id == message_id,
+        )
+        result = await self._session.execute(statement)
+        record = result.mappings().one_or_none()
+        return None if record is None else message_from_record(record)
+
+    async def list_messages_through(
+        self,
+        *,
+        conversation_id: ConversationId,
+        through_sequence: int,
+    ) -> tuple[Message, ...]:
+        if through_sequence <= 0:
+            raise ValueError("through_sequence must be greater than zero")
+
+        statement = (
+            select(messages)
+            .where(
+                messages.c.conversation_id == conversation_id,
+                messages.c.sequence <= through_sequence,
+            )
+            .order_by(messages.c.sequence)
+        )
+        result = await self._session.execute(statement)
+        return tuple(message_from_record(record) for record in result.mappings())
+
+
+class SqlAlchemyConversationSummaryRepository:
+    """Persists immutable summaries with one winner per authority key."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_if_absent(
+        self,
+        summary: ConversationSummary,
+    ) -> ConversationSummary:
+        statement = (
+            postgresql_insert(conversation_summaries)
+            .values(conversation_summary_to_record(summary))
+            .on_conflict_do_nothing(constraint="conversation_summary_authority")
+            .returning(*conversation_summaries.c)
+        )
+        result = await self._session.execute(statement)
+        record = result.mappings().one_or_none()
+
+        if record is not None:
+            return conversation_summary_from_record(record)
+
+        winner_statement = select(conversation_summaries).where(
+            conversation_summaries.c.conversation_id == summary.conversation_id,
+            conversation_summaries.c.agent_version_id == summary.agent_version_id,
+            conversation_summaries.c.from_sequence == summary.from_sequence,
+            conversation_summaries.c.through_sequence == summary.through_sequence,
+            conversation_summaries.c.summarizer_version == summary.summarizer_version,
+            conversation_summaries.c.token_counter_version == summary.token_counter_version,
+        )
+        winner_result = await self._session.execute(winner_statement)
+        return conversation_summary_from_record(winner_result.mappings().one())
+
+    async def get_latest_compatible(
+        self,
+        *,
+        conversation_id: ConversationId,
+        agent_version_id: AgentVersionId,
+        through_sequence: int,
+        summarizer_version: str,
+        token_counter_version: str,
+    ) -> ConversationSummary | None:
+        if through_sequence <= 0:
+            raise ValueError("through_sequence must be greater than zero")
+
+        statement = (
+            select(conversation_summaries)
+            .where(
+                conversation_summaries.c.conversation_id == conversation_id,
+                conversation_summaries.c.agent_version_id == agent_version_id,
+                conversation_summaries.c.through_sequence <= through_sequence,
+                conversation_summaries.c.summarizer_version == summarizer_version,
+                conversation_summaries.c.token_counter_version == token_counter_version,
+            )
+            .order_by(conversation_summaries.c.through_sequence.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(statement)
+        record = result.mappings().one_or_none()
+        return None if record is None else conversation_summary_from_record(record)
 
 
 class SqlAlchemyTurnRepository:

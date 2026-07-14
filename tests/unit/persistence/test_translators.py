@@ -7,6 +7,8 @@ from switchboard.adapters.persistence.translators import (
     agent_version_from_record,
     agent_version_to_record,
     conversation_from_record,
+    conversation_summary_from_record,
+    conversation_summary_to_record,
     conversation_to_record,
     execution_event_from_record,
     execution_event_to_record,
@@ -18,6 +20,7 @@ from switchboard.adapters.persistence.translators import (
     turn_to_record,
 )
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.context import ContextPolicy, ConversationSummary
 from switchboard.domain.conversations import (
     Conversation,
     ConversationStatus,
@@ -32,6 +35,7 @@ from switchboard.domain.identifiers import (
     AgentDefinitionId,
     AgentVersionId,
     ConversationId,
+    ConversationSummaryId,
     ExecutionEventId,
     MessageId,
     TeamId,
@@ -62,6 +66,7 @@ def test_agent_version_round_trip() -> None:
         id=AgentVersionId(uuid4()),
         agent_definition_id=AgentDefinitionId(uuid4()),
         version_number=1,
+        context_policy=ContextPolicy(4096, 512, 256, 256, 1),
         created_at=datetime(2026, 7, 13, tzinfo=UTC),
     )
 
@@ -80,6 +85,23 @@ def test_conversation_round_trip() -> None:
     )
 
     assert conversation_from_record(conversation_to_record(conversation)) == conversation
+
+
+def test_conversation_summary_round_trip() -> None:
+    summary = ConversationSummary(
+        id=ConversationSummaryId(uuid4()),
+        conversation_id=ConversationId(uuid4()),
+        agent_version_id=AgentVersionId(uuid4()),
+        from_sequence=1,
+        through_sequence=4,
+        content="Earlier requirements and decisions.",
+        estimated_token_count=5,
+        summarizer_version="prefix-v1",
+        token_counter_version="word-count-v1",
+        created_at=datetime(2026, 7, 13, tzinfo=UTC),
+    )
+
+    assert conversation_summary_from_record(conversation_summary_to_record(summary)) == summary
 
 
 def test_message_round_trip() -> None:

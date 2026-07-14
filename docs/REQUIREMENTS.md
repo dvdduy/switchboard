@@ -16,7 +16,14 @@
 | FR-002 | P0 | Stream committed turn events and assistant output through SSE. | A client reconnects with a cursor and reconstructs the stream without missing committed events. |
 | FR-003 | P0 | Define immutable `AgentVersion` records containing prompt, model, tools, policies, routing configuration, and budgets. | Editing an agent creates a new version; old conversations remain reproducible. |
 | FR-004 | P0 | Pin each conversation to an `AgentVersion`. | New versions do not silently alter existing conversations. |
-| FR-005 | P0 | Manage context within a defined token budget using truncation and/or summarization. | Long-conversation tests remain within budget while preserving designated critical facts. |
+| FR-005 | P0 | Manage context within a defined token budget using truncation and/or summarization. | Long-conversation tests remain within budget, preserve configured mandatory context, and represent omitted history with a provenance-bearing summary. |
+
+Day 4 evidence for FR-005: immutable agent-version context policies, explicit
+budget failures, deterministic newest-suffix selection, provenance-bearing
+durable prefix summaries, turn-pinned message cutoffs, compatible-summary reuse,
+randomized budget tests, and PostgreSQL reconstruction tests. Phase 1 mandatory
+context means the current input plus the configured newest-message floor;
+semantic critical-fact detection and user-pinned memory are not implemented.
 
 ### Tool platform
 

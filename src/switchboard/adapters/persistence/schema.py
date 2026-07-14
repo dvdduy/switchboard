@@ -83,6 +83,11 @@ agent_versions = Table(
         Integer,
         nullable=False,
     ),
+    Column("model_window_tokens", Integer, nullable=False),
+    Column("reserved_output_tokens", Integer, nullable=False),
+    Column("fixed_overhead_tokens", Integer, nullable=False),
+    Column("summary_max_tokens", Integer, nullable=False),
+    Column("minimum_recent_messages", Integer, nullable=False),
     Column(
         "created_at",
         DateTime(timezone=True),
@@ -96,6 +101,27 @@ agent_versions = Table(
     CheckConstraint(
         "version_number > 0",
         name="version_number_positive",
+    ),
+    CheckConstraint(
+        """
+        model_window_tokens > 0
+        AND reserved_output_tokens > 0
+        AND fixed_overhead_tokens > 0
+        AND summary_max_tokens > 0
+        AND minimum_recent_messages > 0
+        """,
+        name="context_policy_fields_positive",
+    ),
+    CheckConstraint(
+        "reserved_output_tokens + fixed_overhead_tokens < model_window_tokens",
+        name="context_policy_has_input_capacity",
+    ),
+    CheckConstraint(
+        """
+        summary_max_tokens
+        < model_window_tokens - reserved_output_tokens - fixed_overhead_tokens
+        """,
+        name="summary_fits_input_capacity",
     ),
 )
 
@@ -218,6 +244,67 @@ messages = Table(
     CheckConstraint(
         "btrim(content) <> ''",
         name="content_not_blank",
+    ),
+)
+
+
+conversation_summaries = Table(
+    "conversation_summaries",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column("conversation_id", Uuid(as_uuid=True), nullable=False),
+    Column("agent_version_id", Uuid(as_uuid=True), nullable=False),
+    Column("from_sequence", Integer, nullable=False),
+    Column("through_sequence", Integer, nullable=False),
+    Column("content", Text, nullable=False),
+    Column("estimated_token_count", Integer, nullable=False),
+    Column("summarizer_version", String(100), nullable=False),
+    Column("token_counter_version", String(100), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    ForeignKeyConstraint(
+        ["conversation_id", "from_sequence"],
+        ["messages.conversation_id", "messages.sequence"],
+        name="summary_from_message",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["conversation_id", "through_sequence"],
+        ["messages.conversation_id", "messages.sequence"],
+        name="summary_through_message",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["agent_version_id"],
+        ["agent_versions.id"],
+        name="summary_agent_version",
+        ondelete="RESTRICT",
+    ),
+    UniqueConstraint(
+        "conversation_id",
+        "agent_version_id",
+        "from_sequence",
+        "through_sequence",
+        "summarizer_version",
+        "token_counter_version",
+        name="conversation_summary_authority",
+    ),
+    CheckConstraint("from_sequence = 1", name="coverage_starts_at_one"),
+    CheckConstraint(
+        "through_sequence >= from_sequence",
+        name="coverage_ordered",
+    ),
+    CheckConstraint(
+        "estimated_token_count > 0",
+        name="estimated_token_count_positive",
+    ),
+    CheckConstraint("btrim(content) <> ''", name="content_not_blank"),
+    CheckConstraint(
+        "btrim(summarizer_version) <> ''",
+        name="summarizer_version_not_blank",
+    ),
+    CheckConstraint(
+        "btrim(token_counter_version) <> ''",
+        name="token_counter_version_not_blank",
     ),
 )
 
@@ -510,6 +597,13 @@ Index(
     "ix_turns_conversation_status",
     turns.c.conversation_id,
     turns.c.status,
+)
+
+Index(
+    "ix_conversation_summaries_compatible",
+    conversation_summaries.c.conversation_id,
+    conversation_summaries.c.agent_version_id,
+    conversation_summaries.c.through_sequence,
 )
 
 Index(
