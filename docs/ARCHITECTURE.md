@@ -23,7 +23,7 @@ flowchart LR
 ## Target container view
 
 This diagram includes later outbox, model, tool, evaluation, and rollout
-components. The current Day 4 deployment subset is listed below.
+components. The current Day 5 deployment subset is listed below.
 
 ```mermaid
 flowchart TB
@@ -99,8 +99,8 @@ src/switchboard/
 ## Target runtime turn flow
 
 The following end-to-end outbox, worker, routing, policy, tool, and model flow is
-the target architecture; Days 3–4 implement the durable event/SSE subset and
-the provider-independent context assembly boundary described below.
+the target architecture; Days 3–5 implement the durable event/SSE, context, and
+tool-registry control-plane subsets described below.
 
 ```mermaid
 sequenceDiagram
@@ -258,6 +258,41 @@ deterministic extractive simulator, not a production tokenizer or model-backed
 semantic summarizer. Context construction is not yet wired into a real model
 orchestration loop.
 
+## Tool registry and conformance
+
+`ToolDefinition` is the stable team-owned identity and `ToolVersion` stores one
+immutable validated manifest plus a canonical content hash. Mutable availability
+is isolated in `ToolVersionState`, whose revision supports compare-and-set
+activation, deprecation, and disable transitions. Activation records the exact
+successful `ToolConformanceRun` that tested the version.
+
+Manifest validation accepts bounded JSON Schema Draft 2020-12 object contracts,
+rejects remote references, exposes no executable/credential/endpoint
+configuration fields, freezes JSON recursively, and returns ordered safe
+diagnostics without rejected values. It does not semantically detect secrets in
+arbitrary descriptions or schema annotations; callers must submit sanitized
+control-plane text.
+Effect, scope, timeout, retry, idempotency, reconciliation, adapter key, and
+redaction declarations are part of the immutable contract.
+
+`ToolAdapter` and `ToolAdapterResolver` are application ports. Conformance invokes
+an installed adapter without an open database transaction, validates synthetic
+inputs and normalized outputs, bounds calls by timeout, checks declared errors,
+idempotency propagation, reconciliation, and redaction, then persists the
+complete run and case results in one short unit of work. Cancellation before the
+write persists no partial run.
+
+Binding an active exact tool version clones the base immutable `AgentVersion`
+and its existing bindings under the agent-definition lock. The eligible query
+returns only same-team exact bindings whose current lifecycle is `ACTIVE` and
+whose activation run passed. Runtime actor authorization, live-health filtering,
+semantic routing, dispatch, and approval remain downstream responsibilities.
+
+The current resolver contains deterministic local `search_work_items` and
+`update_due_date` examples. It is not dynamic code upload or production service
+discovery; HTTP, MCP, queue, secret, and external SaaS adapters remain future
+implementations of the same ports.
+
 ## Persistence ownership
 
 - PostgreSQL: source of truth for configuration, conversation, execution, approval, audit, eval, and release state.
@@ -305,7 +340,7 @@ Only when measurement justifies it:
 No microservice split is required merely to demonstrate seniority.
 
 
-## Implementation status after Day 4
+## Implementation status after Day 5
 
 Implemented:
 
@@ -332,6 +367,13 @@ Implemented:
   configured recent-message floor;
 - turn-pinned message cutoffs, compatible summary reuse, and short-transaction
   summary creation through provider-independent ports.
+- durable team-owned tool definitions, lock-allocated immutable versions, and
+  separate revisioned lifecycle state;
+- bounded manifest validation with safe diagnostics and immutable JSON content;
+- case-level deterministic conformance persisted only after adapter work;
+- exact successful-run activation and immutable agent-version binding clones;
+- deterministic local read-only and idempotent/reconcilable mutating adapters;
+- an eligible query filtered by binding, team, active state, and conformance.
 
 Planned but not yet implemented:
 
@@ -344,5 +386,7 @@ Planned but not yet implemented:
 - production tokenizers and semantic summarizers;
 - summary chaining, retention, deletion, and large-history optimization;
 - context integration into model orchestration;
-- tool routing, policies, approvals, model adapters, evaluation, and rollout
-  control.
+- semantic tool routing, runtime tool dispatch, authorization and health
+  filtering, policies, approvals, model adapters, evaluation, and rollout control;
+- public registry-management APIs, production HTTP/MCP/queue adapters, and
+  conformance retention or production telemetry policy.

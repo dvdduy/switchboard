@@ -7,6 +7,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
 EXPECTED_DOMAIN_TABLES = {
+    "agent_tool_bindings",
     "agent_definitions",
     "agent_versions",
     "conversations",
@@ -15,6 +16,11 @@ EXPECTED_DOMAIN_TABLES = {
     "turns",
     "turn_attempts",
     "execution_events",
+    "tool_conformance_case_results",
+    "tool_conformance_runs",
+    "tool_definitions",
+    "tool_version_states",
+    "tool_versions",
 }
 
 

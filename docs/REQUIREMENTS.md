@@ -35,6 +35,15 @@ semantic critical-fact detection and user-pinned memory are not implemented.
 | FR-013 | P0 | Run a tool conformance suite before activation. | A deliberately malformed tool cannot become active. |
 | FR-014 | P0 | Exclude unauthorized or unhealthy tools before semantic routing. | The routing trace records why a preferred tool was unavailable. |
 
+Day 5 evidence for FR-010 through FR-013: team-scoped definitions, lock-allocated
+immutable versions, bounded Draft 2020-12 manifest validation with safe
+diagnostics, separate compare-and-set lifecycle state, persisted case-level
+conformance, exact successful-run activation, immutable agent-version cloning,
+and two reference adapters registered without routing changes. Day 5 implements
+only the binding/team/lifecycle/conformance portion of FR-014; actor
+authorization, health filtering, routing traces, and semantic routing remain
+future work.
+
 ### Routing and orchestration
 
 | ID | Priority | Requirement | Acceptance signal |

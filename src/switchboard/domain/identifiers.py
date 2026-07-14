@@ -7,6 +7,11 @@ TeamId = NewType("TeamId", UUID)
 
 AgentDefinitionId = NewType("AgentDefinitionId", UUID)
 AgentVersionId = NewType("AgentVersionId", UUID)
+ToolDefinitionId = NewType("ToolDefinitionId", UUID)
+ToolVersionId = NewType("ToolVersionId", UUID)
+ToolConformanceRunId = NewType("ToolConformanceRunId", UUID)
+ToolConformanceCaseResultId = NewType("ToolConformanceCaseResultId", UUID)
+AgentToolBindingId = NewType("AgentToolBindingId", UUID)
 
 ConversationId = NewType("ConversationId", UUID)
 MessageId = NewType("MessageId", UUID)

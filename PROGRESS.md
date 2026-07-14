@@ -4,8 +4,8 @@
 
 - **Current phase:** Phase 1 — Conversation Platform Foundations
 - **Current milestone:** Milestone 1 — Conversation platform
-- **Completed through:** Day 4
-- **Next session:** Day 5 — Tool registry
+- **Completed through:** Day 5
+- **Next session:** Day 6 — Shared conversation API
 
 ## Progress log
 
@@ -16,6 +16,7 @@
 | 2 | Complete | Conversation history versus logical turns and physical attempts; transaction and ordering invariants | Versioned agents, conversations, immutable messages, turns, attempts, Alembic, repositories, UoW, atomic `StartConversation` | PostgreSQL migration, rollback, constraint, persistence, and concurrent-append tests | `feat(conversations): add durable conversation and turn model` | Explain deterministic per-conversation ordering, version pinning, and atomic durable turn creation | No execution events, outbox, streaming API, or worker dispatch yet |
 | 3 | Complete | SSE as a delivery view over a durable event log | Immutable execution events, deterministic simulator, replay-then-tail service, reconnectable SSE | Ruff, mypy, 103 tests, PostgreSQL integration tests, migration round-trip, container build | Pending approval: `feat(streaming): add durable reconnectable turn event stream` | Explain committed-event replay, exclusive reconnect cursors, and why transport disconnect is not cancellation | No outbox, durable worker recovery, real provider, Redis notification optimization, retention policy, or production chunk tuning |
 | 4 | Complete | Context windows as explicit product/reliability budgets; summaries as lossy derived artifacts with provenance | Immutable agent-version context policies, deterministic bounded assembler, durable prefix summaries, compatible reuse workflow | Ruff, mypy, 163 tests, PostgreSQL reconstruction and migration round-trip, container build | Pending approval: `feat(context): add token-budgeted conversation context management` | Explain turn-pinned context snapshots, mandatory recent context, summary provenance, and why summarization runs outside transactions | No production tokenizer or semantic summarizer, summary chaining/retention, large-history optimization, or model-loop integration |
+| 5 | Complete | A registry is a versioned safety contract; schema validation does not replace behavioral conformance | Team-owned tool definitions, immutable manifests, separate CAS lifecycle state, conformance history, immutable agent bindings, reference adapters, eligible query | Ruff, mypy, 216 tests, PostgreSQL migration/concurrency coverage, migration round-trip, container build | Pending approval: `feat(tools): add versioned registry and conformance gates` | Explain immutable content versus mutable lifecycle, exact-version activation evidence, and safe idempotent adapter contracts | No runtime authorization/health filtering, public registry API, production HTTP/MCP/queue adapters, durable dispatch/recovery, or conformance retention/telemetry policy |
 
 ## Milestones
 
@@ -44,7 +45,7 @@
 - [x] Durable execution-event model
 - [x] SSE streaming
 - [x] Context-window management
-- [ ] Tool registry and conformance
+- [x] Tool registry and conformance
 - [ ] Shared conversation API
 - [ ] Orchestration adapter
 - [ ] Policy and approval
@@ -94,6 +95,10 @@
   and version provenance, never as visible messages or authorization evidence.
 - Run summarization outside database transactions and use a uniqueness-backed
   insert/re-read to select one concurrent authority winner.
+- Keep validated tool manifest content immutable while lifecycle state changes
+  separately through revision compare-and-set updates.
+- Require successful conformance for the exact version before activation and
+  clone agent versions when adding exact tool-version bindings.
 
 ## Known debt
 
@@ -110,5 +115,15 @@
 - Summary chaining, retention/deletion, and large-history performance policy are
   not defined.
 - Context reconstruction is not yet connected to a real model orchestration loop.
+- Tool eligibility currently covers binding, team ownership, active lifecycle,
+  and successful conformance; runtime actor authorization and health are deferred.
+- Tool management is application-only; there is no public registry API.
+- Only deterministic local reference adapters exist. HTTP, MCP, queue, and real
+  external SaaS adapters are not implemented.
+- Tool dispatch, durable invocation recovery, and production unknown-outcome
+  reconciliation are not implemented; the mutating reference adapter is in-memory.
+- Conformance history has no retention policy or production telemetry/duration strategy.
+- Manifest fields do not include credential configuration, but semantic secret
+  scanning of arbitrary descriptions or schema annotations is not implemented.
 - Tenant ownership is validated by the application rather than complete composite tenant constraints.
 - Message append-only behavior is enforced by domain/repository convention, not database permissions.

@@ -3,24 +3,32 @@
 from collections.abc import Mapping
 from datetime import datetime
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from switchboard.adapters.persistence.schema import (
     agent_definitions,
+    agent_tool_bindings,
     agent_versions,
     conversation_summaries,
     conversations,
     execution_events,
     messages,
+    tool_conformance_case_results,
+    tool_conformance_runs,
+    tool_definitions,
+    tool_version_states,
+    tool_versions,
     turn_attempts,
     turns,
 )
 from switchboard.adapters.persistence.translators import (
     agent_definition_from_record,
     agent_definition_to_record,
+    agent_tool_binding_from_record,
+    agent_tool_binding_to_record,
     agent_version_from_record,
     agent_version_to_record,
     conversation_from_record,
@@ -31,6 +39,16 @@ from switchboard.adapters.persistence.translators import (
     execution_event_to_record,
     message_from_record,
     message_to_record,
+    tool_conformance_case_result_from_record,
+    tool_conformance_case_result_to_record,
+    tool_conformance_run_from_record,
+    tool_conformance_run_to_record,
+    tool_definition_from_record,
+    tool_definition_to_record,
+    tool_version_from_record,
+    tool_version_state_from_record,
+    tool_version_state_to_record,
+    tool_version_to_record,
     turn_attempt_from_record,
     turn_attempt_to_record,
     turn_from_record,
@@ -38,6 +56,8 @@ from switchboard.adapters.persistence.translators import (
 )
 from switchboard.application.errors import (
     ConversationNotFoundError,
+    ToolDefinitionNotFoundError,
+    ToolVersionLifecycleConflictError,
     TurnAttemptLifecycleConflictError,
     TurnEventStateError,
     TurnLifecycleConflictError,
@@ -52,12 +72,29 @@ from switchboard.domain.execution_events import (
 )
 from switchboard.domain.identifiers import (
     AgentDefinitionId,
+    AgentToolBindingId,
     AgentVersionId,
     ConversationId,
     ExecutionEventId,
     MessageId,
+    TeamId,
+    ToolConformanceRunId,
+    ToolDefinitionId,
+    ToolVersionId,
     TurnAttemptId,
     TurnId,
+)
+from switchboard.domain.tools import (
+    AgentToolBinding,
+    EligibleTool,
+    ToolConformanceCaseResult,
+    ToolConformanceRun,
+    ToolConformanceStatus,
+    ToolDefinition,
+    ToolLifecycleStatus,
+    ToolManifest,
+    ToolVersion,
+    ToolVersionState,
 )
 from switchboard.domain.turns import Turn, TurnAttempt, TurnStatus
 
@@ -91,6 +128,35 @@ class SqlAlchemyAgentRepository:
         version: AgentVersion,
     ) -> None:
         await self._session.execute(insert(agent_versions).values(agent_version_to_record(version)))
+
+    async def add_next_version_from(
+        self,
+        *,
+        agent_version_id: AgentVersionId,
+        base_version: AgentVersion,
+        created_at: datetime,
+    ) -> AgentVersion:
+        definition_result = await self._session.execute(
+            select(agent_definitions.c.id)
+            .where(agent_definitions.c.id == base_version.agent_definition_id)
+            .with_for_update()
+        )
+        if definition_result.scalar_one_or_none() is None:
+            raise ValueError("base agent definition was not found")
+        version_result = await self._session.execute(
+            select(func.coalesce(func.max(agent_versions.c.version_number), 0)).where(
+                agent_versions.c.agent_definition_id == base_version.agent_definition_id
+            )
+        )
+        version = AgentVersion(
+            id=agent_version_id,
+            agent_definition_id=base_version.agent_definition_id,
+            version_number=version_result.scalar_one() + 1,
+            context_policy=base_version.context_policy,
+            created_at=created_at,
+        )
+        await self._session.execute(insert(agent_versions).values(agent_version_to_record(version)))
+        return version
 
     async def get_version(
         self,
@@ -540,3 +606,303 @@ class SqlAlchemyTurnRepository:
         result = await self._session.execute(statement)
 
         return tuple(execution_event_from_record(record) for record in result.mappings())
+
+
+class SqlAlchemyToolRegistryRepository:
+    """Persists immutable tool registry records and CAS lifecycle state."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_definition(self, definition: ToolDefinition) -> None:
+        await self._session.execute(
+            insert(tool_definitions).values(tool_definition_to_record(definition))
+        )
+
+    async def add_definition_if_absent(self, definition: ToolDefinition) -> bool:
+        result = await self._session.execute(
+            postgresql_insert(tool_definitions)
+            .values(tool_definition_to_record(definition))
+            .on_conflict_do_nothing(constraint="team_tool_key")
+            .returning(tool_definitions.c.id)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def get_definition(
+        self,
+        tool_definition_id: ToolDefinitionId,
+    ) -> ToolDefinition | None:
+        result = await self._session.execute(
+            select(tool_definitions).where(tool_definitions.c.id == tool_definition_id)
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else tool_definition_from_record(record)
+
+    async def get_definition_by_key(
+        self,
+        *,
+        team_id: TeamId,
+        tool_key: str,
+    ) -> ToolDefinition | None:
+        result = await self._session.execute(
+            select(tool_definitions).where(
+                tool_definitions.c.team_id == team_id,
+                tool_definitions.c.tool_key == tool_key,
+            )
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else tool_definition_from_record(record)
+
+    async def add_next_version(
+        self,
+        *,
+        tool_version_id: ToolVersionId,
+        tool_definition_id: ToolDefinitionId,
+        manifest: ToolManifest,
+        created_at: datetime,
+    ) -> ToolVersion:
+        definition_result = await self._session.execute(
+            select(tool_definitions.c.id)
+            .where(tool_definitions.c.id == tool_definition_id)
+            .with_for_update()
+        )
+        if definition_result.scalar_one_or_none() is None:
+            raise ToolDefinitionNotFoundError(f"tool definition {tool_definition_id} was not found")
+
+        version_result = await self._session.execute(
+            select(func.coalesce(func.max(tool_versions.c.version_number), 0)).where(
+                tool_versions.c.tool_definition_id == tool_definition_id
+            )
+        )
+        version = ToolVersion(
+            id=tool_version_id,
+            tool_definition_id=tool_definition_id,
+            version_number=version_result.scalar_one() + 1,
+            manifest=manifest,
+            content_hash=manifest.content_hash,
+            created_at=created_at,
+        )
+        state = ToolVersionState(
+            tool_version_id=version.id,
+            status=ToolLifecycleStatus.DRAFT,
+            revision=1,
+            activated_conformance_run_id=None,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        await self._session.execute(insert(tool_versions).values(tool_version_to_record(version)))
+        await self._session.execute(
+            insert(tool_version_states).values(tool_version_state_to_record(state))
+        )
+        return version
+
+    async def get_version(self, tool_version_id: ToolVersionId) -> ToolVersion | None:
+        result = await self._session.execute(
+            select(tool_versions).where(tool_versions.c.id == tool_version_id)
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else tool_version_from_record(record)
+
+    async def get_version_state(
+        self,
+        tool_version_id: ToolVersionId,
+    ) -> ToolVersionState | None:
+        result = await self._session.execute(
+            select(tool_version_states).where(
+                tool_version_states.c.tool_version_id == tool_version_id
+            )
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else tool_version_state_from_record(record)
+
+    async def get_version_state_for_update(
+        self,
+        tool_version_id: ToolVersionId,
+    ) -> ToolVersionState | None:
+        result = await self._session.execute(
+            select(tool_version_states)
+            .where(tool_version_states.c.tool_version_id == tool_version_id)
+            .with_for_update()
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else tool_version_state_from_record(record)
+
+    async def update_version_state(
+        self,
+        *,
+        previous: ToolVersionState,
+        updated: ToolVersionState,
+    ) -> None:
+        if previous.tool_version_id != updated.tool_version_id:
+            raise ValueError("tool lifecycle transition must preserve identity")
+        if updated.revision != previous.revision + 1:
+            raise ValueError("tool lifecycle transition must increment revision")
+
+        result = await self._session.execute(
+            update(tool_version_states)
+            .where(
+                tool_version_states.c.tool_version_id == previous.tool_version_id,
+                tool_version_states.c.revision == previous.revision,
+            )
+            .values(tool_version_state_to_record(updated))
+            .returning(tool_version_states.c.tool_version_id)
+        )
+        if result.scalar_one_or_none() is None:
+            raise ToolVersionLifecycleConflictError(
+                f"tool version {previous.tool_version_id} lifecycle changed after it was read"
+            )
+
+    async def add_binding(self, binding: AgentToolBinding) -> None:
+        await self._session.execute(
+            insert(agent_tool_bindings).values(agent_tool_binding_to_record(binding))
+        )
+
+    async def get_binding(
+        self,
+        binding_id: AgentToolBindingId,
+    ) -> AgentToolBinding | None:
+        result = await self._session.execute(
+            select(agent_tool_bindings).where(agent_tool_bindings.c.id == binding_id)
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else agent_tool_binding_from_record(record)
+
+    async def list_bindings(
+        self,
+        agent_version_id: AgentVersionId,
+    ) -> tuple[AgentToolBinding, ...]:
+        result = await self._session.execute(
+            select(agent_tool_bindings)
+            .where(agent_tool_bindings.c.agent_version_id == agent_version_id)
+            .order_by(agent_tool_bindings.c.tool_definition_id)
+        )
+        return tuple(agent_tool_binding_from_record(record) for record in result.mappings())
+
+    async def list_eligible_for_agent(
+        self,
+        *,
+        team_id: TeamId,
+        agent_version_id: AgentVersionId,
+    ) -> tuple[EligibleTool, ...]:
+        statement = (
+            select(
+                tool_definitions.c.id.label("definition_id"),
+                tool_definitions.c.team_id.label("definition_team_id"),
+                tool_definitions.c.tool_key,
+                tool_definitions.c.created_at.label("definition_created_at"),
+                tool_versions.c.id.label("version_id"),
+                tool_versions.c.tool_definition_id,
+                tool_versions.c.version_number,
+                tool_versions.c.manifest,
+                tool_versions.c.content_hash,
+                tool_versions.c.created_at.label("version_created_at"),
+            )
+            .select_from(
+                agent_tool_bindings.join(
+                    agent_versions,
+                    agent_versions.c.id == agent_tool_bindings.c.agent_version_id,
+                )
+                .join(
+                    agent_definitions,
+                    agent_definitions.c.id == agent_versions.c.agent_definition_id,
+                )
+                .join(
+                    tool_versions,
+                    tool_versions.c.id == agent_tool_bindings.c.tool_version_id,
+                )
+                .join(
+                    tool_definitions,
+                    tool_definitions.c.id == agent_tool_bindings.c.tool_definition_id,
+                )
+                .join(
+                    tool_version_states,
+                    tool_version_states.c.tool_version_id == tool_versions.c.id,
+                )
+                .join(
+                    tool_conformance_runs,
+                    tool_conformance_runs.c.id
+                    == tool_version_states.c.activated_conformance_run_id,
+                )
+            )
+            .where(
+                agent_tool_bindings.c.agent_version_id == agent_version_id,
+                agent_definitions.c.team_id == team_id,
+                tool_definitions.c.team_id == team_id,
+                tool_version_states.c.status == ToolLifecycleStatus.ACTIVE.value,
+                tool_conformance_runs.c.status == ToolConformanceStatus.PASSED.value,
+            )
+            .order_by(tool_definitions.c.tool_key, tool_versions.c.version_number)
+        )
+        result = await self._session.execute(statement)
+        eligible: list[EligibleTool] = []
+        for record in result.mappings():
+            definition = tool_definition_from_record(
+                {
+                    "id": record["definition_id"],
+                    "team_id": record["definition_team_id"],
+                    "tool_key": record["tool_key"],
+                    "created_at": record["definition_created_at"],
+                }
+            )
+            version = tool_version_from_record(
+                {
+                    "id": record["version_id"],
+                    "tool_definition_id": record["tool_definition_id"],
+                    "version_number": record["version_number"],
+                    "manifest": record["manifest"],
+                    "content_hash": record["content_hash"],
+                    "created_at": record["version_created_at"],
+                }
+            )
+            eligible.append(EligibleTool(definition=definition, version=version))
+        return tuple(eligible)
+
+    async def add_conformance_run(
+        self,
+        run: ToolConformanceRun,
+        case_results: tuple[ToolConformanceCaseResult, ...],
+    ) -> None:
+        if not case_results:
+            raise ValueError("conformance run requires at least one case result")
+        if any(result.run_id != run.id for result in case_results):
+            raise ValueError("conformance case result must belong to its run")
+        expected_status = (
+            ToolConformanceStatus.PASSED
+            if all(result.status is ToolConformanceStatus.PASSED for result in case_results)
+            else ToolConformanceStatus.FAILED
+        )
+        if run.status is not expected_status:
+            raise ValueError("conformance run status must summarize its case results")
+
+        await self._session.execute(
+            insert(tool_conformance_runs).values(tool_conformance_run_to_record(run))
+        )
+        await self._session.execute(
+            insert(tool_conformance_case_results).values(
+                [tool_conformance_case_result_to_record(result) for result in case_results]
+            )
+        )
+
+    async def get_conformance_run(
+        self,
+        run_id: ToolConformanceRunId,
+    ) -> tuple[ToolConformanceRun, tuple[ToolConformanceCaseResult, ...]] | None:
+        run_result = await self._session.execute(
+            select(tool_conformance_runs).where(tool_conformance_runs.c.id == run_id)
+        )
+        run_record = run_result.mappings().one_or_none()
+        if run_record is None:
+            return None
+
+        cases_result = await self._session.execute(
+            select(tool_conformance_case_results)
+            .where(tool_conformance_case_results.c.run_id == run_id)
+            .order_by(tool_conformance_case_results.c.case_key)
+        )
+        return (
+            tool_conformance_run_from_record(run_record),
+            tuple(
+                tool_conformance_case_result_from_record(record)
+                for record in cases_result.mappings()
+            ),
+        )

@@ -7,6 +7,7 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "alembic>=1.18.5",
     "fastapi",
+    "jsonschema>=4.25.1",
     "psycopg[binary]",
     "pydantic-settings",
     "redis",
@@ -21,6 +22,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "ruff",
+    "types-jsonschema",
 ]
 
 [build-system]

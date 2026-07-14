@@ -15,7 +15,8 @@
 1. Developer submits a versioned tool manifest.
 2. Switchboard validates identity, schemas, effect type, scopes, timeout, retry policy, ownership, and idempotency declaration.
 3. The conformance suite runs representative valid, invalid, timeout, and error scenarios.
-4. The tool version enters `DRAFT` or `ACTIVE` according to policy.
+4. The published version remains `DRAFT` until a successful exact-version run
+   is explicitly activated.
 5. A product developer binds the active version to a new agent version.
 6. Eligible routing requests may now consider it.
 
@@ -28,7 +29,9 @@
 
 ### Success evidence
 
-A new reference tool becomes routable without modifying Switchboard internals.
+A new reference tool validates, passes conformance, activates, binds to a new
+agent version, and appears in the eligible registry result without modifying
+orchestration or routing code. Semantic routing itself is not implemented yet.
 
 ---
 

@@ -13,12 +13,27 @@ from switchboard.domain.execution_events import (
 )
 from switchboard.domain.identifiers import (
     AgentDefinitionId,
+    AgentToolBindingId,
     AgentVersionId,
     ConversationId,
     ExecutionEventId,
     MessageId,
+    TeamId,
+    ToolConformanceRunId,
+    ToolDefinitionId,
+    ToolVersionId,
     TurnAttemptId,
     TurnId,
+)
+from switchboard.domain.tools import (
+    AgentToolBinding,
+    EligibleTool,
+    ToolConformanceCaseResult,
+    ToolConformanceRun,
+    ToolDefinition,
+    ToolManifest,
+    ToolVersion,
+    ToolVersionState,
 )
 from switchboard.domain.turns import Turn, TurnAttempt
 
@@ -37,6 +52,15 @@ class AgentRepository(Protocol):
         version: AgentVersion,
     ) -> None:
         """Persist an immutable agent version."""
+
+    async def add_next_version_from(
+        self,
+        *,
+        agent_version_id: AgentVersionId,
+        base_version: AgentVersion,
+        created_at: datetime,
+    ) -> AgentVersion:
+        """Lock the definition and clone the base policy into its next version."""
 
     async def get_definition(
         self,
@@ -190,3 +214,96 @@ class TurnRepository(Protocol):
         limit: int,
     ) -> tuple[ExecutionEvent, ...]:
         """Return events after an exclusive sequence cursor."""
+
+
+class ToolRegistryRepository(Protocol):
+    """Persistence operations for versioned tool registry state."""
+
+    async def add_definition(self, definition: ToolDefinition) -> None:
+        """Persist one stable team-owned tool identity."""
+
+    async def add_definition_if_absent(self, definition: ToolDefinition) -> bool:
+        """Persist a definition unless its team/key identity already exists."""
+
+    async def get_definition(
+        self,
+        tool_definition_id: ToolDefinitionId,
+    ) -> ToolDefinition | None:
+        """Return a definition by identity."""
+
+    async def get_definition_by_key(
+        self,
+        *,
+        team_id: TeamId,
+        tool_key: str,
+    ) -> ToolDefinition | None:
+        """Return one team's definition for a normalized stable key."""
+
+    async def add_next_version(
+        self,
+        *,
+        tool_version_id: ToolVersionId,
+        tool_definition_id: ToolDefinitionId,
+        manifest: ToolManifest,
+        created_at: datetime,
+    ) -> ToolVersion:
+        """Lock a definition and persist its next positive version number."""
+
+    async def get_version(self, tool_version_id: ToolVersionId) -> ToolVersion | None:
+        """Return immutable version content by identity."""
+
+    async def get_version_state(
+        self,
+        tool_version_id: ToolVersionId,
+    ) -> ToolVersionState | None:
+        """Return separately mutable lifecycle state."""
+
+    async def get_version_state_for_update(
+        self,
+        tool_version_id: ToolVersionId,
+    ) -> ToolVersionState | None:
+        """Lock lifecycle state for an atomic eligibility-dependent write."""
+
+    async def update_version_state(
+        self,
+        *,
+        previous: ToolVersionState,
+        updated: ToolVersionState,
+    ) -> None:
+        """Persist one lifecycle transition using revision compare-and-set."""
+
+    async def add_binding(self, binding: AgentToolBinding) -> None:
+        """Persist an immutable exact-version agent binding."""
+
+    async def get_binding(
+        self,
+        binding_id: AgentToolBindingId,
+    ) -> AgentToolBinding | None:
+        """Return a binding by identity."""
+
+    async def list_bindings(
+        self,
+        agent_version_id: AgentVersionId,
+    ) -> tuple[AgentToolBinding, ...]:
+        """Return deterministic bindings for an immutable agent version."""
+
+    async def list_eligible_for_agent(
+        self,
+        *,
+        team_id: TeamId,
+        agent_version_id: AgentVersionId,
+    ) -> tuple[EligibleTool, ...]:
+        """Return active, bound, successful exact-version manifests."""
+
+    async def add_conformance_run(
+        self,
+        run: ToolConformanceRun,
+        case_results: tuple[ToolConformanceCaseResult, ...],
+    ) -> None:
+        """Persist one complete run and all case results atomically."""
+
+    async def get_conformance_run(
+        self,
+        run_id: ToolConformanceRunId,
+    ) -> tuple[ToolConformanceRun, tuple[ToolConformanceCaseResult, ...]] | None:
+        """Return one run with ordered case results."""

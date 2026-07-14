@@ -9,11 +9,14 @@ The current implementation provides:
 - immutable PostgreSQL execution events with deterministic per-turn ordering;
 - deterministic simulated assistant execution;
 - reconnectable read-only SSE replay and tailing;
-- turn-pinned, token-budgeted context assembly with durable prefix summaries.
+- turn-pinned, token-budgeted context assembly with durable prefix summaries;
+- team-owned immutable tool manifests with deterministic conformance;
+- exact-version agent bindings and an active-bound eligible-tool query;
+- deterministic read-only and idempotent mutating reference adapters.
 
 Planned capabilities include:
 
-- tool registration and routing;
+- semantic tool routing and runtime invocation;
 - safe and durable tool execution;
 - policy enforcement;
 - evaluation and regression detection;
@@ -100,6 +103,20 @@ a production model tokenizer or semantic-memory system. Context reconstruction
 is currently an application workflow and is not exposed as a public endpoint or
 connected to a real model loop.
 
+## Tool registry
+
+Day 5 adds an application-level control plane for registering team-owned tool
+definitions, publishing validated immutable manifests, running deterministic
+conformance, activating exact versions, and cloning agent versions with exact
+tool bindings. JSON Schema Draft 2020-12 validation is bounded, remote references
+are rejected, and diagnostics do not copy rejected values.
+
+The included `search_work_items` and `update_due_date` adapters are deterministic
+local examples. The latter demonstrates stable idempotency keys and
+reconciliation, but its mutation state is intentionally in-memory. No public
+tool-management endpoint, semantic router, runtime authorization/health filter,
+or durable production tool dispatcher exists yet.
+
 ## Quality gate
 
 ```bash
@@ -114,3 +131,8 @@ The current phase intentionally does not include a transactional outbox,
 durable worker claiming/recovery, a real model provider, Redis event
 notification, event or summary retention policies, production chunk-size
 tuning, production tokenizers, semantic summarization, or summary chaining.
+Tool-registry debt also includes production HTTP/MCP/queue adapters, durable
+dispatch and recovery, runtime authorization and health filtering, and
+conformance retention/telemetry policy.
+The manifest shape contains no credential configuration, but semantic secret
+scanning of arbitrary description or schema text is also deferred.

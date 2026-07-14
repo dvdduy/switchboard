@@ -64,3 +64,39 @@ class ContextBudgetExceededError(ApplicationError):
             f"mandatory context requires {required_tokens} tokens "
             f"but only {available_tokens} are available"
         )
+
+
+class ToolDefinitionNotFoundError(ApplicationError):
+    """Raised when an operation requires a missing tool definition."""
+
+
+class ToolDefinitionAlreadyExistsError(ApplicationError):
+    """Raised when one team already owns a requested stable tool key."""
+
+
+class ToolVersionNotFoundError(ApplicationError):
+    """Raised when an operation requires a missing tool version."""
+
+
+class ToolTeamMismatchError(ApplicationError):
+    """Raised when a tool does not belong to the requesting team."""
+
+
+class ToolVersionStateError(ApplicationError):
+    """Raised when a tool operation is incompatible with lifecycle state."""
+
+
+class ToolConformanceRunNotFoundError(ApplicationError):
+    """Raised when activation references a missing conformance run."""
+
+
+class ToolConformanceFailedError(ApplicationError):
+    """Raised when a failed or mismatched run is used for activation."""
+
+
+class ToolAlreadyBoundError(ApplicationError):
+    """Raised when an agent version already binds the stable tool identity."""
+
+
+class ToolVersionLifecycleConflictError(ApplicationError):
+    """Raised when tool lifecycle state changed after it was read."""

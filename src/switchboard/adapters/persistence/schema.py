@@ -582,6 +582,156 @@ execution_events = Table(
 )
 
 
+tool_definitions = Table(
+    "tool_definitions",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column("team_id", Uuid(as_uuid=True), nullable=False),
+    Column("tool_key", String(100), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("team_id", "tool_key", name="team_tool_key"),
+    UniqueConstraint("team_id", "id", name="team_tool_identity"),
+    CheckConstraint("tool_key ~ '^[a-z][a-z0-9._-]{0,99}$'", name="tool_key_valid"),
+)
+
+
+tool_versions = Table(
+    "tool_versions",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column(
+        "tool_definition_id",
+        Uuid(as_uuid=True),
+        ForeignKey("tool_definitions.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("version_number", Integer, nullable=False),
+    Column("manifest", JSONB, nullable=False),
+    Column("content_hash", String(64), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("tool_definition_id", "version_number", name="tool_definition_version"),
+    UniqueConstraint("tool_definition_id", "id", name="tool_definition_version_identity"),
+    CheckConstraint("version_number > 0", name="version_number_positive"),
+    CheckConstraint("jsonb_typeof(manifest) = 'object'", name="manifest_is_object"),
+    CheckConstraint("content_hash ~ '^[0-9a-f]{64}$'", name="content_hash_valid"),
+)
+
+
+tool_conformance_runs = Table(
+    "tool_conformance_runs",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column(
+        "tool_version_id",
+        Uuid(as_uuid=True),
+        ForeignKey("tool_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("status", String(32), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("tool_version_id", "id", name="tool_version_conformance_identity"),
+    CheckConstraint("status IN ('passed', 'failed')", name="status_valid"),
+    CheckConstraint("completed_at >= started_at", name="completed_at_not_before_started_at"),
+)
+
+
+tool_conformance_case_results = Table(
+    "tool_conformance_case_results",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column(
+        "run_id",
+        Uuid(as_uuid=True),
+        ForeignKey("tool_conformance_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("case_key", String(100), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("duration_ms", Integer, nullable=False),
+    Column("diagnostic_code", String(200), nullable=True),
+    UniqueConstraint("run_id", "case_key", name="conformance_run_case"),
+    CheckConstraint("case_key ~ '^[a-z][a-z0-9._-]{0,99}$'", name="case_key_valid"),
+    CheckConstraint("status IN ('passed', 'failed')", name="status_valid"),
+    CheckConstraint("duration_ms BETWEEN 0 AND 300000", name="duration_ms_bounded"),
+    CheckConstraint(
+        """
+        (status = 'passed' AND diagnostic_code IS NULL)
+        OR
+        (
+            status = 'failed'
+            AND diagnostic_code ~ '^[a-z][a-z0-9._-]{0,199}$'
+        )
+        """,
+        name="diagnostic_matches_status",
+    ),
+)
+
+
+tool_version_states = Table(
+    "tool_version_states",
+    metadata,
+    Column("tool_version_id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("activated_conformance_run_id", Uuid(as_uuid=True), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    ForeignKeyConstraint(
+        ["tool_version_id"],
+        ["tool_versions.id"],
+        name="tool_version_state_version",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["tool_version_id", "activated_conformance_run_id"],
+        ["tool_conformance_runs.tool_version_id", "tool_conformance_runs.id"],
+        name="tool_version_state_activation_run",
+        ondelete="RESTRICT",
+    ),
+    CheckConstraint(
+        "status IN ('draft', 'active', 'deprecated', 'disabled')",
+        name="status_valid",
+    ),
+    CheckConstraint("revision > 0", name="revision_positive"),
+    CheckConstraint("updated_at >= created_at", name="updated_at_not_before_created_at"),
+    CheckConstraint(
+        """
+        (status = 'draft' AND activated_conformance_run_id IS NULL)
+        OR status = 'disabled'
+        OR (
+            status IN ('active', 'deprecated')
+            AND activated_conformance_run_id IS NOT NULL
+        )
+        """,
+        name="activation_matches_status",
+    ),
+)
+
+
+agent_tool_bindings = Table(
+    "agent_tool_bindings",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column(
+        "agent_version_id",
+        Uuid(as_uuid=True),
+        ForeignKey("agent_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("tool_definition_id", Uuid(as_uuid=True), nullable=False),
+    Column("tool_version_id", Uuid(as_uuid=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    ForeignKeyConstraint(
+        ["tool_definition_id", "tool_version_id"],
+        ["tool_versions.tool_definition_id", "tool_versions.id"],
+        name="agent_binding_tool_version",
+        ondelete="RESTRICT",
+    ),
+    UniqueConstraint("agent_version_id", "tool_definition_id", name="agent_stable_tool"),
+)
+
+
 Index(
     "ix_agent_definitions_team_id",
     agent_definitions.c.team_id,
@@ -624,4 +774,28 @@ Index(
     execution_events.c.turn_id,
     unique=True,
     postgresql_where=text("kind = 'turn.started'"),
+)
+
+Index(
+    "ix_tool_versions_definition_created",
+    tool_versions.c.tool_definition_id,
+    tool_versions.c.created_at,
+)
+
+Index(
+    "ix_tool_version_states_eligible",
+    tool_version_states.c.status,
+    tool_version_states.c.tool_version_id,
+)
+
+Index(
+    "ix_agent_tool_bindings_agent_version",
+    agent_tool_bindings.c.agent_version_id,
+    agent_tool_bindings.c.tool_version_id,
+)
+
+Index(
+    "ix_tool_conformance_runs_version_completed",
+    tool_conformance_runs.c.tool_version_id,
+    tool_conformance_runs.c.completed_at,
 )

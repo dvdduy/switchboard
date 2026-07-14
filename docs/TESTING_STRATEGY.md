@@ -53,6 +53,13 @@ Every tool adapter must pass:
 - reconciliation behavior when required;
 - redaction rules.
 
+Day 5 implements this boundary with deterministic reference adapters and a
+framework-independent eight-case runner. PostgreSQL tests additionally cover
+team-key and version-allocation races, complete-run rollback, exact activation
+ownership, lifecycle compare-and-set conflicts, immutable agent-version cloning,
+binding eligibility, and exclusion of failed/deprecated/disabled/cross-team
+records. Production external-adapter failure injection remains deferred.
+
 ### API contract tests
 
 - versioned request/response schemas;

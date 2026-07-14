@@ -79,12 +79,52 @@ remain target capabilities.
 
 Stable identity and ownership of a tool capability.
 
+**Implemented fields:** `tool_definition_id`, `team_id`, normalized `tool_key`,
+and creation time. The key is unique within its team.
+
 ### ToolVersion
 
 Immutable tool contract and execution configuration.
 
-**Contains:** input/output schemas, description, effect type, required scopes, timeout, retry policy, idempotency support, owner, health strategy, optional reconciliation capability.  
-**Invariant:** `ACTIVE` versions passed conformance checks; schema or behavior changes require a new version.
+**Implemented content:** bounded input/output Draft 2020-12 schemas, display name,
+description, effect type, required scopes, timeout, retry policy, idempotency and
+reconciliation declarations, local adapter key, redaction paths, version number,
+and canonical content hash. Ownership is inherited from `ToolDefinition`, not
+duplicated in caller-controlled manifest JSON. Health strategy remains deferred.
+
+**Invariant:** Manifest content is recursively immutable. Schema or behavior
+changes require a new positive version number allocated under the definition
+lock.
+
+### ToolVersionState
+
+Separately mutable lifecycle state for one exact `ToolVersion`.
+
+**Contains:** `DRAFT`, `ACTIVE`, `DEPRECATED`, or `DISABLED` status, revision,
+timestamps, and the exact conformance run authorizing activation.
+
+**Invariant:** Lifecycle transitions use revision compare-and-set semantics;
+`ACTIVE` and `DEPRECATED` states retain successful activation evidence, and
+`DISABLED` is terminal.
+
+### ToolConformanceRun
+
+Immutable complete result for deterministic adapter contract checks, with
+ordered case-level results containing only status, duration, and safe diagnostic
+codes. Tested values and provider messages are not persisted.
+
+**Invariant:** Activation requires a committed successful run for the exact tool
+version. Adapter calls occur outside database transactions; a run and all cases
+are persisted together afterward.
+
+### AgentToolBinding
+
+Immutable link from one exact `AgentVersion` to one exact `ToolVersion` and its
+stable definition.
+
+**Invariant:** One agent version binds at most one version of a stable tool
+definition. Adding a binding clones the base agent version and its existing
+bindings rather than mutating it. New bindings require current `ACTIVE` state.
 
 ### Conversation
 
@@ -201,7 +241,7 @@ Release identifies a candidate configuration bundle. Deployment records stage, t
 - How long should approval requests and execution events be retained?
 
 
-## Implementation status after Day 4
+## Implementation status after Day 5
 
 Implemented durable entities:
 
@@ -216,6 +256,17 @@ Conversation
 └── Turn
     ├── TurnAttempt
     └── ExecutionEvent
+
+Team
+└── ToolDefinition
+    └── ToolVersion
+        ├── ToolVersionState
+        └── ToolConformanceRun
+            └── ToolConformanceCaseResult
+
+AgentVersion
+└── AgentToolBinding
+    └── ToolVersion
 ```
 
 Implemented invariants:
@@ -244,10 +295,23 @@ Implemented invariants:
 - concurrent summary creation converges on one authoritative artifact;
 - summarization runs outside database transactions and failed or cancelled
   summarization persists no partial artifact.
+- tool definitions own unique normalized keys within a team;
+- immutable tool versions contain frozen manifest JSON and deterministic hashes;
+- effect, retry, idempotency, reconciliation, scope, timeout, and redaction
+  declarations are bounded and validated before persistence;
+- lifecycle state is separate and updated through revision compare-and-set;
+- activation requires successful conformance for the exact version;
+- conformance calls run outside transactions and complete case results persist
+  atomically without tested values or provider messages;
+- binding an active version creates a new immutable agent version and copies
+  existing bindings under lock;
+- eligible manifests require an exact binding, matching team, `ACTIVE` state,
+  and successful activation conformance.
 
 Not implemented yet: transactional outbox dispatch, durable worker claiming and
 recovery, real model-provider execution, Redis event notifications, event
 retention, production chunk tuning, production token counting, semantic
 summarization, summary retention/chaining, model-loop context integration,
-routing decisions, approvals, tool invocations, evaluation entities, and
-release entities.
+routing decisions, runtime authorization/health filtering, durable tool
+invocations, production adapters, approvals, evaluation entities, and release
+entities.
