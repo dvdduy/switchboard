@@ -17,7 +17,9 @@ from switchboard.adapters.persistence.postgres_health import (
 from switchboard.adapters.persistence.unit_of_work import (
     SqlAlchemyUnitOfWorkFactory,
 )
+from switchboard.adapters.streaming.asyncio_sleeper import AsyncioSleeper
 from switchboard.application.services.readiness import ReadinessService
+from switchboard.application.services.replay_turn_events import ReplayTurnEvents
 from switchboard.bootstrap.config import Settings
 
 
@@ -30,6 +32,7 @@ class RuntimeResources:
     unit_of_work_factory: SqlAlchemyUnitOfWorkFactory
     redis_client: Redis
     readiness_service: ReadinessService
+    replay_turn_events: ReplayTurnEvents
 
     async def close(self) -> None:
         """Close all runtime-owned resources."""
@@ -65,10 +68,16 @@ def build_runtime_resources(settings: Settings) -> RuntimeResources:
         )
     )
 
+    replay_turn_events = ReplayTurnEvents(
+        unit_of_work_factory=unit_of_work_factory,
+        sleeper=AsyncioSleeper(),
+    )
+
     return RuntimeResources(
         database_engine=database_engine,
         session_factory=session_factory,
         unit_of_work_factory=unit_of_work_factory,
         redis_client=redis_client,
         readiness_service=readiness_service,
+        replay_turn_events=replay_turn_events,
     )

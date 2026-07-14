@@ -126,3 +126,38 @@ def test_attempt_number_must_be_positive() -> None:
             status=TurnAttemptStatus.PENDING,
             created_at=datetime(2026, 7, 13, tzinfo=UTC),
         )
+
+
+def test_turn_allocates_event_sequences_without_mutating_original() -> None:
+    turn = make_turn()
+
+    after_first, first_sequence = turn.allocate_event_sequence()
+    after_second, second_sequence = after_first.allocate_event_sequence()
+
+    assert first_sequence == 1
+    assert second_sequence == 2
+
+    assert turn.next_event_sequence == 1
+    assert after_first.next_event_sequence == 2
+    assert after_second.next_event_sequence == 3
+
+
+def test_turn_next_event_sequence_must_be_positive() -> None:
+    with pytest.raises(
+        DomainValidationError,
+        match=("next_event_sequence must be greater than zero"),
+    ):
+        Turn(
+            id=TurnId(uuid4()),
+            conversation_id=ConversationId(uuid4()),
+            input_message_id=MessageId(uuid4()),
+            agent_version_id=AgentVersionId(uuid4()),
+            status=TurnStatus.RECEIVED,
+            created_at=datetime(
+                2026,
+                7,
+                13,
+                tzinfo=UTC,
+            ),
+            next_event_sequence=0,
+        )

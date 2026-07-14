@@ -11,6 +11,7 @@ EXPECTED_DOMAIN_TABLES = {
     "messages",
     "turns",
     "turn_attempts",
+    "execution_events",
 }
 
 

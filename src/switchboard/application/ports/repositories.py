@@ -1,15 +1,22 @@
 """Repository contracts required by application use cases."""
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Protocol
 
 from switchboard.domain.agents import AgentDefinition, AgentVersion
 from switchboard.domain.conversations import Conversation, Message, MessageRole
+from switchboard.domain.execution_events import (
+    ExecutionEvent,
+    ExecutionEventKind,
+)
 from switchboard.domain.identifiers import (
     AgentDefinitionId,
     AgentVersionId,
     ConversationId,
+    ExecutionEventId,
     MessageId,
+    TurnAttemptId,
     TurnId,
 )
 from switchboard.domain.turns import Turn, TurnAttempt
@@ -77,7 +84,7 @@ class ConversationRepository(Protocol):
 
 
 class TurnRepository(Protocol):
-    """Persistence operations for logical turns and execution attempts."""
+    """Persistence operations for turns, attempts, and execution events."""
 
     async def add(
         self,
@@ -91,14 +98,57 @@ class TurnRepository(Protocol):
     ) -> Turn | None:
         """Return a turn when it exists."""
 
+    async def update_turn_lifecycle(
+        self,
+        *,
+        previous: Turn,
+        updated: Turn,
+    ) -> None:
+        """Persist a lifecycle transition using compare-and-set."""
+
     async def add_attempt(
         self,
         attempt: TurnAttempt,
     ) -> None:
         """Persist a new physical execution attempt."""
 
+    async def get_attempt(
+        self,
+        attempt_id: TurnAttemptId,
+    ) -> TurnAttempt | None:
+        """Return a physical execution attempt when it exists."""
+
+    async def update_attempt_lifecycle(
+        self,
+        *,
+        previous: TurnAttempt,
+        updated: TurnAttempt,
+    ) -> None:
+        """Persist an attempt transition using compare-and-set."""
+
     async def list_attempts(
         self,
         turn_id: TurnId,
     ) -> tuple[TurnAttempt, ...]:
         """Return attempts ordered by attempt number."""
+
+    async def append_event(
+        self,
+        *,
+        turn_id: TurnId,
+        event_id: ExecutionEventId,
+        attempt_id: TurnAttemptId | None,
+        kind: ExecutionEventKind,
+        payload: Mapping[str, object],
+        occurred_at: datetime,
+    ) -> ExecutionEvent:
+        """Lock the turn and append its next durable event."""
+
+    async def list_events(
+        self,
+        *,
+        turn_id: TurnId,
+        after_sequence: int,
+        limit: int,
+    ) -> tuple[ExecutionEvent, ...]:
+        """Return events after an exclusive sequence cursor."""

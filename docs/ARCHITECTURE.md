@@ -20,7 +20,10 @@ flowchart LR
     CP --> DP
 ```
 
-## Container view
+## Target container view
+
+This diagram includes later outbox, model, tool, evaluation, and rollout
+components. The current Day 3 deployment subset is listed below.
 
 ```mermaid
 flowchart TB
@@ -93,7 +96,11 @@ src/switchboard/
 └── bootstrap/
 ```
 
-## Runtime turn flow
+## Target runtime turn flow
+
+The following end-to-end outbox, worker, routing, policy, tool, and model flow is
+the target architecture; Day 3 implements only the durable event/simulator and
+SSE delivery subset described in the implementation notes below.
 
 ```mermaid
 sequenceDiagram
@@ -130,14 +137,15 @@ sequenceDiagram
 
 ## Durable dispatch
 
-The API transaction commits:
+Target architecture, not yet implemented: the API transaction will commit:
 
 1. user message;
 2. `TurnExecution` in `RECEIVED`;
 3. initial execution event;
 4. outbox record.
 
-The worker claims outbox records and advances the state machine. This avoids a committed turn being lost between database commit and in-memory scheduling.
+The future worker will claim outbox records and advance the state machine. Day 3
+does not yet provide the transactional outbox, durable claiming, or recovery.
 
 ## Execution state machine
 
@@ -207,9 +215,21 @@ Each result maps to a platform error taxonomy. A timeout after dispatch of a mut
 
 ## Streaming model
 
-SSE is used initially because the primary direction is server-to-client event delivery. Events have monotonically increasing turn-local sequence numbers. A reconnecting client supplies `Last-Event-ID`; the API replays committed events and then follows new events.
+SSE is used because the primary direction is server-to-client event delivery.
+Implemented events have monotonically increasing turn-local sequence numbers
+allocated under a PostgreSQL turn-row lock. A reconnecting client supplies a
+non-negative `Last-Event-ID`; the API treats it as an exclusive cursor, replays
+committed events in order, and then follows newly committed events.
 
-Generated tokens may be buffered into durable chunks rather than committing every token individually. The exact batching policy will be benchmarked and documented.
+The Day 3 simulator emits stable `response.delta` chunks rather than exposing
+provider token objects. A framework-independent replay service polls PostgreSQL
+with short independent units of work, never sleeps or yields with a transaction
+open, and closes after a terminal event. Redis is not required for correctness;
+notification-assisted polling remains a future optimization.
+
+`GET /api/v1/turns/{turn_id}/events` is read-only. Disconnecting or cancelling
+one observer does not mutate execution or affect another observer. Production
+retention and chunk-size tuning remain undefined.
 
 ## Persistence ownership
 
@@ -225,13 +245,19 @@ Live rollout protection consumes operational signals. It does not rerun the enti
 
 ## Deployment
 
-Initial Docker Compose services:
+Current Docker Compose services:
 
 ```text
-switchboard-api
-switchboard-worker
+api
+worker
 postgres
+postgres-test (test profile)
 redis
+```
+
+Planned additions:
+
+```text
 eval-runner
 rollout-simulator
 ```
@@ -252,7 +278,7 @@ Only when measurement justifies it:
 No microservice split is required merely to demonstrate seniority.
 
 
-## Implementation status after Day 2
+## Implementation status after Day 3
 
 Implemented:
 
@@ -262,12 +288,24 @@ Implemented:
 - PostgreSQL and Redis runtime resources;
 - SQLAlchemy Core persistence, Alembic, repository ports, and unit of work;
 - durable versioned-agent, conversation, message, turn, and attempt records;
-- atomic conversation start and PostgreSQL integration tests.
+- atomic conversation start and PostgreSQL integration tests;
+- immutable JSON-compatible execution events associated with logical turns and
+  optional physical attempts;
+- turn-local event sequence allocation, locked append, exclusive-cursor reads,
+  lifecycle compare-and-set updates, and relational ownership constraints;
+- deterministic simulated execution with durable chunks, atomic success output,
+  and durable terminal failure after partial progress;
+- framework-independent replay-then-tail polling over short transactions;
+- reconnectable SSE with exact event IDs/types, compact JSON payloads, preflight
+  validation, terminal closure, and independent observers.
 
 Planned but not yet implemented:
 
 - public conversation commands;
-- execution-event log and SSE replay;
 - transactional outbox and worker claiming;
+- durable worker recovery;
+- real model-provider execution;
+- Redis-assisted event notification;
+- event retention and production chunk-size tuning;
 - context management, tool routing, policies, approvals, model adapters,
   evaluation, and rollout control.

@@ -1,6 +1,6 @@
 # Day 3 — Durable Execution Events and Reconnectable SSE
 
-**Status:** Planned
+**Status:** Complete
 
 ## Goal
 
@@ -69,6 +69,25 @@ Update progress, domain and architecture implementation notes, README examples,
 and any affected ADR. Run the full quality gate, PostgreSQL integration tests,
 container build, and CI.
 
+## Completion evidence
+
+- immutable JSON-compatible execution events use positive turn-local sequences;
+- PostgreSQL appends allocate sequence numbers under a turn-row lock and enforce
+  attempt ownership plus at most one start and one terminal event per turn; the
+  simulator emits exactly one of each;
+- the deterministic simulator persists public response chunks, atomic assistant
+  message/success completion, and durable failure after partial progress;
+- the framework-independent observer preflights turns, replays after an exclusive
+  cursor, polls with short units of work, and isolates observer cancellation;
+- `GET /api/v1/turns/{turn_id}/events` validates `Last-Event-ID`, emits compact
+  SSE frames, replays committed history, and tails running turns;
+- Ruff formatting/linting, strict mypy, the full test suite, PostgreSQL integration
+  suite, Alembic downgrade/upgrade, and the container build pass.
+
+Day 3 closes with the intentionally deferred debt listed below. CI configuration
+contains the same format, lint, type, test, and container-build gates; this local
+closure does not claim that an unpushed GitHub Actions run occurred.
+
 ## Out of scope
 
 - create/continue-conversation HTTP commands;
@@ -77,6 +96,10 @@ container build, and CI.
 - Redis Pub/Sub as a correctness dependency;
 - tool calls, approval, and cancellation APIs;
 - event retention and production chunk-size tuning.
+
+The implementation also intentionally retains polling before a future Redis
+notification optimization and uses a deterministic simulator rather than a real
+model provider.
 
 ## Suggested commit
 

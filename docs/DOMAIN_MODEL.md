@@ -92,15 +92,23 @@ User, assistant, tool, or system-visible message record. Raw confidential model 
 
 Durable lifecycle of processing one user turn.
 
-**Key fields:** `turn_id`, `conversation_id`, `status`, `attempt`, `created_at`, `completed_at`, `last_event_seq`, failure classification.  
-**Invariant:** State changes follow the approved transition graph and append an `ExecutionEvent`.
+**Key fields:** `turn_id`, `conversation_id`, `status`, `created_at`,
+`completed_at`, and `next_event_sequence`. Physical retries are represented by
+separate `TurnAttempt` records.
+**Invariant:** State changes follow the approved transition graph. The Day 3
+simulator commits lifecycle changes and their public execution events atomically.
 
 ### ExecutionEvent
 
-Immutable audit and replay record.
+Immutable audit and replay record owned by one logical turn and optionally linked
+to the physical attempt that emitted it.
 
-**Examples:** turn received, routing started/completed, approval requested/granted, tool started/completed, unknown outcome, generation chunk committed, turn completed.  
-**Invariant:** Sequence numbers are monotonic within a turn.
+**Implemented kinds:** `turn.started`, `response.delta`, `turn.completed`, and
+`turn.failed`. Payloads are recursively immutable and JSON-compatible; they
+contain stable public data and never private model reasoning.
+**Invariant:** Positive sequence numbers are unique and monotonic within a turn.
+An event attempt, when present, must belong to the same turn. A turn has at most
+one start event and one terminal event.
 
 ### RoutingDecision
 
@@ -168,7 +176,7 @@ Release identifies a candidate configuration bundle. Deployment records stage, t
 - How long should approval requests and execution events be retained?
 
 
-## Implementation status after Day 2
+## Implementation status after Day 3
 
 Implemented durable entities:
 
@@ -179,7 +187,8 @@ AgentDefinition
 Conversation
 ├── Message
 └── Turn
-    └── TurnAttempt
+    ├── TurnAttempt
+    └── ExecutionEvent
 ```
 
 Implemented invariants:
@@ -192,7 +201,16 @@ Implemented invariants:
 - attempts are uniquely ordered within a turn;
 - terminal states require completion timestamps;
 - starting a conversation, first message, first turn, and first attempt is atomic;
-- a turn's input message must belong to the same conversation.
+- a turn's input message must belong to the same conversation;
+- execution-event payloads are immutable JSON-compatible public values;
+- event sequences are turn-local, positive, unique, and allocated under a row lock;
+- event-attempt ownership is enforced relationally;
+- simulated lifecycle transitions use compare-and-set updates;
+- assistant output and terminal success are committed atomically;
+- partial simulated output remains replayable before a durable failure event;
+- SSE replay uses an exclusive cursor and delivers committed events only.
 
-Not implemented yet: execution events, outbox dispatch, routing decisions,
-approvals, tool invocations, evaluation entities, and release entities.
+Not implemented yet: transactional outbox dispatch, durable worker claiming and
+recovery, real model-provider execution, Redis event notifications, event
+retention, production chunk tuning, routing decisions, approvals, tool
+invocations, evaluation entities, and release entities.

@@ -69,9 +69,15 @@ class Turn:
     agent_version_id: AgentVersionId
     status: TurnStatus
     created_at: datetime
+    next_event_sequence: int = 1
     completed_at: datetime | None = None
 
     def __post_init__(self) -> None:
+        require_positive(
+            self.next_event_sequence,
+            field_name="next_event_sequence",
+        )
+
         created_at = normalize_utc(
             self.created_at,
             field_name="created_at",
@@ -100,6 +106,27 @@ class Turn:
                 raise DomainValidationError("terminal turn status requires completed_at")
         elif self.completed_at is not None:
             raise DomainValidationError("non-terminal turn status must not have completed_at")
+
+    @property
+    def is_terminal(self) -> bool:
+        """Return whether no further execution work may occur."""
+
+        return self.status in _TURN_TERMINAL_STATUSES
+
+    def allocate_event_sequence(
+        self,
+    ) -> tuple["Turn", int]:
+        """Allocate the next deterministic event sequence."""
+
+        allocated_sequence = self.next_event_sequence
+
+        return (
+            replace(
+                self,
+                next_event_sequence=allocated_sequence + 1,
+            ),
+            allocated_sequence,
+        )
 
     def start(self) -> "Turn":
         """Move a received turn into active processing."""

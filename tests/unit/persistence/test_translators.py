@@ -8,6 +8,8 @@ from switchboard.adapters.persistence.translators import (
     agent_version_to_record,
     conversation_from_record,
     conversation_to_record,
+    execution_event_from_record,
+    execution_event_to_record,
     message_from_record,
     message_to_record,
     turn_attempt_from_record,
@@ -22,10 +24,15 @@ from switchboard.domain.conversations import (
     Message,
     MessageRole,
 )
+from switchboard.domain.execution_events import (
+    ExecutionEvent,
+    ExecutionEventKind,
+)
 from switchboard.domain.identifiers import (
     AgentDefinitionId,
     AgentVersionId,
     ConversationId,
+    ExecutionEventId,
     MessageId,
     TeamId,
     TurnAttemptId,
@@ -120,3 +127,32 @@ def test_turn_attempt_round_trip() -> None:
     )
 
     assert turn_attempt_from_record(turn_attempt_to_record(attempt)) == attempt
+
+
+def test_execution_event_round_trip() -> None:
+    event = ExecutionEvent(
+        id=ExecutionEventId(uuid4()),
+        turn_id=TurnId(uuid4()),
+        attempt_id=TurnAttemptId(uuid4()),
+        sequence=3,
+        kind=ExecutionEventKind.RESPONSE_DELTA,
+        payload={
+            "text": "Project ",
+            "metadata": {
+                "indexes": [1, 2],
+            },
+        },
+        occurred_at=datetime(
+            2026,
+            7,
+            13,
+            tzinfo=UTC,
+        ),
+    )
+
+    restored = execution_event_from_record(execution_event_to_record(event))
+
+    assert restored == event
+    assert restored.payload["metadata"] == {
+        "indexes": (1, 2),
+    }

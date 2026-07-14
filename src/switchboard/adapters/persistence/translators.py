@@ -1,5 +1,6 @@
 """Translation between relational rows and pure domain entities."""
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Protocol, cast
 from uuid import UUID
@@ -11,10 +12,15 @@ from switchboard.domain.conversations import (
     Message,
     MessageRole,
 )
+from switchboard.domain.execution_events import (
+    ExecutionEvent,
+    ExecutionEventKind,
+)
 from switchboard.domain.identifiers import (
     AgentDefinitionId,
     AgentVersionId,
     ConversationId,
+    ExecutionEventId,
     MessageId,
     TeamId,
     TurnAttemptId,
@@ -146,6 +152,7 @@ def turn_to_record(
         "status": turn.status.value,
         "created_at": turn.created_at,
         "completed_at": turn.completed_at,
+        "next_event_sequence": turn.next_event_sequence,
     }
 
 
@@ -162,6 +169,10 @@ def turn_from_record(
         completed_at=cast(
             datetime | None,
             record["completed_at"],
+        ),
+        next_event_sequence=cast(
+            int,
+            record["next_event_sequence"],
         ),
     )
 
@@ -201,5 +212,63 @@ def turn_attempt_from_record(
         failure_code=cast(
             str | None,
             record["failure_code"],
+        ),
+    )
+
+
+def _thaw_json_value(value: object) -> object:
+    """Convert immutable domain JSON into serializer-friendly values."""
+
+    if isinstance(value, Mapping):
+        return {key: _thaw_json_value(nested_value) for key, nested_value in value.items()}
+
+    if isinstance(value, tuple):
+        return [_thaw_json_value(item) for item in value]
+
+    return value
+
+
+def thaw_json_object(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    """Convert a frozen JSON object to a mutable database value."""
+
+    return {key: _thaw_json_value(value) for key, value in payload.items()}
+
+
+def execution_event_to_record(
+    event: ExecutionEvent,
+) -> dict[str, object]:
+    return {
+        "id": event.id,
+        "turn_id": event.turn_id,
+        "attempt_id": event.attempt_id,
+        "sequence": event.sequence,
+        "kind": event.kind.value,
+        "payload": thaw_json_object(event.payload),
+        "occurred_at": event.occurred_at,
+    }
+
+
+def execution_event_from_record(
+    record: Record,
+) -> ExecutionEvent:
+    return ExecutionEvent(
+        id=ExecutionEventId(cast(UUID, record["id"])),
+        turn_id=TurnId(cast(UUID, record["turn_id"])),
+        attempt_id=(
+            None
+            if record["attempt_id"] is None
+            else TurnAttemptId(cast(UUID, record["attempt_id"]))
+        ),
+        sequence=cast(int, record["sequence"]),
+        kind=ExecutionEventKind(cast(str, record["kind"])),
+        payload=cast(
+            Mapping[str, object],
+            record["payload"],
+        ),
+        occurred_at=cast(
+            datetime,
+            record["occurred_at"],
         ),
     )

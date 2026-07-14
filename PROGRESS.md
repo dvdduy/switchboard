@@ -4,8 +4,8 @@
 
 - **Current phase:** Phase 1 — Conversation Platform Foundations
 - **Current milestone:** Milestone 1 — Conversation platform
-- **Completed through:** Day 2
-- **Next session:** Day 3 — Durable execution events and reconnectable SSE
+- **Completed through:** Day 3
+- **Next session:** Day 4 — Context window management
 
 ## Progress log
 
@@ -14,7 +14,7 @@
 | 0 | Complete | Product/platform boundary; durable execution; offline vs live evaluation | Documentation source of truth and initial ADRs | Cross-document review completed | N/A | Explain Switchboard as shared conversation, tool-execution, and quality-control infrastructure | Keep documents aligned with implementation |
 | 1 | Complete | Modular monolith, ports/adapters, API versus worker lifecycle | Python 3.13 scaffold, FastAPI health/readiness, separate worker, PostgreSQL, Redis, Docker, CI | Ruff, mypy, pytest, architecture tests, container build | `chore(scaffold): establish Switchboard API, worker, and local infrastructure` | Explain why durable work is separated from the HTTP process and frameworks remain outside the domain | No product API beyond health endpoints |
 | 2 | Complete | Conversation history versus logical turns and physical attempts; transaction and ordering invariants | Versioned agents, conversations, immutable messages, turns, attempts, Alembic, repositories, UoW, atomic `StartConversation` | PostgreSQL migration, rollback, constraint, persistence, and concurrent-append tests | `feat(conversations): add durable conversation and turn model` | Explain deterministic per-conversation ordering, version pinning, and atomic durable turn creation | No execution events, outbox, streaming API, or worker dispatch yet |
-| 3 | Planned | SSE as a delivery view over a durable event log | Execution events, simulator, replay-then-tail service, reconnectable SSE | Cursor, replay, concurrency, terminal-stream, and disconnect tests | `feat(streaming): add durable reconnectable turn event stream` | Explain committed-event replay and why transport disconnect is not cancellation | Outbox and worker recovery remain later work |
+| 3 | Complete | SSE as a delivery view over a durable event log | Immutable execution events, deterministic simulator, replay-then-tail service, reconnectable SSE | Ruff, mypy, 103 tests, PostgreSQL integration tests, migration round-trip, container build | Pending approval: `feat(streaming): add durable reconnectable turn event stream` | Explain committed-event replay, exclusive reconnect cursors, and why transport disconnect is not cancellation | No outbox, durable worker recovery, real provider, Redis notification optimization, retention policy, or production chunk tuning |
 
 ## Milestones
 
@@ -40,8 +40,8 @@
 - [x] Persistence and migrations
 - [x] Versioned agents and conversations
 - [x] Durable conversation, turn, and attempt model
-- [ ] Durable execution-event model
-- [ ] SSE streaming
+- [x] Durable execution-event model
+- [x] SSE streaming
 - [ ] Context-window management
 - [ ] Tool registry and conformance
 - [ ] Shared conversation API
@@ -81,12 +81,22 @@
 - Store a default agent version on the conversation and pin the actual version on every turn.
 - Require explicit unit-of-work commit for multi-record application transactions.
 - Do not claim exactly-once effects across arbitrary external systems.
+- Persist immutable public execution events with turn-local sequences allocated
+  under a PostgreSQL row lock.
+- Treat SSE as a replayable delivery view over committed PostgreSQL events, with
+  `Last-Event-ID` as an exclusive cursor.
+- Poll with short independent transactions; Redis notification remains an
+  optional future latency optimization rather than a correctness dependency.
 
 ## Known debt
 
-- The public API currently exposes only health/readiness endpoints.
-- No transactional outbox or durable worker claiming exists yet.
-- No execution-event history or reconnectable stream exists yet.
+- The public API exposes health/readiness and read-only turn-event SSE; public
+  create/continue-conversation commands do not exist yet.
+- No transactional outbox exists yet.
+- No durable worker claiming or recovery exists yet.
+- Event observers poll PostgreSQL before a future Redis notification optimization.
+- Durable execution uses a deterministic simulator rather than a real model provider.
+- Execution-event retention and production chunk-size tuning are not defined yet.
 - Agent versions do not yet contain prompt, model, tool, router, and policy configuration.
 - Tenant ownership is validated by the application rather than complete composite tenant constraints.
 - Message append-only behavior is enforced by domain/repository convention, not database permissions.

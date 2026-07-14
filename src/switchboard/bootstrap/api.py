@@ -17,6 +17,7 @@ def build_app() -> FastAPI:
         settings=settings,
         readiness_service=resources.readiness_service,
         close_resources=resources.close,
+        replay_turn_events=resources.replay_turn_events,
     )
 
 

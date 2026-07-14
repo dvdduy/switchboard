@@ -19,3 +19,27 @@ class AgentDefinitionNotFoundError(ApplicationError):
 
 class AgentTeamMismatchError(ApplicationError):
     """Raised when an agent does not belong to the requesting team."""
+
+
+class TurnNotFoundError(ApplicationError):
+    """Raised when an operation requires a missing turn."""
+
+
+class TurnAttemptNotFoundError(ApplicationError):
+    """Raised when an operation requires a missing turn attempt."""
+
+
+class TurnLifecycleConflictError(ApplicationError):
+    """Raised when a turn changed after it was read."""
+
+
+class TurnAttemptLifecycleConflictError(ApplicationError):
+    """Raised when a turn attempt changed after it was read."""
+
+
+class TurnAttemptMismatchError(ApplicationError):
+    """Raised when an attempt does not belong to the requested turn."""
+
+
+class TurnEventStateError(ApplicationError):
+    """Raised when an event is incompatible with the turn lifecycle."""

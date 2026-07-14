@@ -7,7 +7,9 @@ from fastapi import FastAPI
 
 from switchboard import __version__
 from switchboard.adapters.api.health import create_health_router
+from switchboard.adapters.api.turn_events import create_turn_events_router
 from switchboard.application.services.readiness import ReadinessService
+from switchboard.application.services.replay_turn_events import ReplayTurnEvents
 from switchboard.bootstrap.config import Settings
 
 CloseResources = Callable[[], Awaitable[None]]
@@ -17,6 +19,7 @@ def create_app(
     settings: Settings,
     readiness_service: ReadinessService,
     close_resources: CloseResources | None = None,
+    replay_turn_events: ReplayTurnEvents | None = None,
 ) -> FastAPI:
     """Create and configure the Switchboard API."""
 
@@ -40,5 +43,8 @@ def create_app(
 
     app.state.settings = settings
     app.include_router(create_health_router(readiness_service))
+
+    if replay_turn_events is not None:
+        app.include_router(create_turn_events_router(replay_turn_events))
 
     return app

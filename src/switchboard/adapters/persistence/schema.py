@@ -14,7 +14,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_name)s",
@@ -254,6 +256,11 @@ turns = Table(
         nullable=False,
     ),
     Column(
+        "next_event_sequence",
+        Integer,
+        nullable=False,
+    ),
+    Column(
         "created_at",
         DateTime(timezone=True),
         nullable=False,
@@ -294,6 +301,10 @@ turns = Table(
     CheckConstraint(
         "completed_at IS NULL OR completed_at >= created_at",
         name="completed_at_not_before_created_at",
+    ),
+    CheckConstraint(
+        "next_event_sequence > 0",
+        name="next_event_sequence_positive",
     ),
 )
 
@@ -400,6 +411,87 @@ turn_attempts = Table(
         ("completed_at IS NULL OR (started_at IS NOT NULL AND completed_at >= started_at)"),
         name="completed_at_not_before_started_at",
     ),
+    UniqueConstraint(
+        "turn_id",
+        "id",
+        name="turn_attempt_identity",
+    ),
+)
+
+
+execution_events = Table(
+    "execution_events",
+    metadata,
+    Column(
+        "id",
+        Uuid(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "turn_id",
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "turns.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    ),
+    Column(
+        "attempt_id",
+        Uuid(as_uuid=True),
+        nullable=True,
+    ),
+    Column(
+        "sequence",
+        Integer,
+        nullable=False,
+    ),
+    Column(
+        "kind",
+        String(64),
+        nullable=False,
+    ),
+    Column(
+        "payload",
+        JSONB,
+        nullable=False,
+    ),
+    Column(
+        "occurred_at",
+        DateTime(timezone=True),
+        nullable=False,
+    ),
+    ForeignKeyConstraint(
+        ["turn_id", "attempt_id"],
+        ["turn_attempts.turn_id", "turn_attempts.id"],
+        name="execution_event_attempt",
+        ondelete="RESTRICT",
+    ),
+    UniqueConstraint(
+        "turn_id",
+        "sequence",
+        name="turn_event_sequence",
+    ),
+    CheckConstraint(
+        "sequence > 0",
+        name="sequence_positive",
+    ),
+    CheckConstraint(
+        """
+        kind IN (
+            'turn.started',
+            'response.delta',
+            'turn.completed',
+            'turn.failed'
+        )
+        """,
+        name="kind_valid",
+    ),
+    CheckConstraint(
+        "jsonb_typeof(payload) = 'object'",
+        name="payload_is_object",
+    ),
 )
 
 
@@ -424,4 +516,18 @@ Index(
     "ix_turn_attempts_turn_status",
     turn_attempts.c.turn_id,
     turn_attempts.c.status,
+)
+
+Index(
+    "uq_execution_events_one_terminal_per_turn",
+    execution_events.c.turn_id,
+    unique=True,
+    postgresql_where=text("kind IN ('turn.completed', 'turn.failed')"),
+)
+
+Index(
+    "uq_execution_events_one_started_per_turn",
+    execution_events.c.turn_id,
+    unique=True,
+    postgresql_where=text("kind = 'turn.started'"),
 )

@@ -13,3 +13,4 @@ MessageId = NewType("MessageId", UUID)
 
 TurnId = NewType("TurnId", UUID)
 TurnAttemptId = NewType("TurnAttemptId", UUID)
+ExecutionEventId = NewType("ExecutionEventId", UUID)
