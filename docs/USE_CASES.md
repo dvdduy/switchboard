@@ -40,12 +40,19 @@ orchestration or routing code. Semantic routing itself is not implemented yet.
 **Primary actor:** End user  
 **Example:** “Which Project Alpha tasks are overdue?”
 
-**Implemented through Day 6:** The client creates a conversation or continuation
+**Implemented Day 7 subset:** The client creates a conversation or continuation
 through `/api/v1`. Switchboard atomically persists the user message, received
 turn, pending attempt, and idempotency receipt, then returns `202` and a
-reconnectable event URL. Tests invoke the deterministic simulator explicitly.
-Automatic outbox dispatch, routing, policy, tool invocation, and real model
-generation in the target flow below are not implemented yet.
+reconnectable event URL. A trusted explicit runner builds the pinned bounded
+context and gives active, bound, scoped, read-only descriptors to a deterministic
+structured model. It can dispatch exact `search_work_items`, normalize the
+result as untrusted data, generate a final response, and expose committed safe
+tool/output events through history and SSE.
+
+Automatic outbox dispatch, semantic routing/confidence, production identity and
+health, policy traces, and real model generation in the target flow below are
+not implemented. The numbered flow remains the target architecture rather than
+a claim that every step is complete.
 
 1. Client creates a turn.
 2. API persists message, turn, event, and outbox record atomically.

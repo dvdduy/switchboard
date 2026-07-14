@@ -23,7 +23,7 @@ flowchart LR
 ## Target container view
 
 This diagram includes later outbox, model, tool, evaluation, and rollout
-components. The current Day 6 deployment subset is listed below.
+components. The current Day 7 deployment subset is listed below.
 
 ```mermaid
 flowchart TB
@@ -145,7 +145,7 @@ Target architecture, not yet implemented: the API transaction will commit:
 3. initial execution event;
 4. outbox record.
 
-The future worker will claim outbox records and advance the state machine. Day 6
+The future worker will claim outbox records and advance the state machine. Day 7
 durably accepts a message, turn, pending attempt, and command receipt, but does
 not yet provide the transactional outbox, durable claiming, or recovery.
 
@@ -245,8 +245,10 @@ allocated under a PostgreSQL turn-row lock. A reconnecting client supplies a
 non-negative `Last-Event-ID`; the API treats it as an exclusive cursor, replays
 committed events in order, and then follows newly committed events.
 
-The Day 3 simulator emits stable `response.delta` chunks rather than exposing
-provider token objects. A framework-independent replay service polls PostgreSQL
+The execution services emit stable `response.delta` chunks rather than exposing
+provider token objects. Day 7 adds safe `tool.started`, `tool.completed`, and
+`tool.failed` events without arguments, results, exceptions, prompts, or private
+reasoning. A framework-independent replay service polls PostgreSQL
 with short independent units of work, never sleeps or yields with a transaction
 open, and closes after a terminal event. Redis is not required for correctness;
 notification-assisted polling remains a future optimization.
@@ -279,8 +281,8 @@ validates tenant ownership before reading or creating summaries.
 
 The token counter and summarizer are ports. The current local summarizer is a
 deterministic extractive simulator, not a production tokenizer or model-backed
-semantic summarizer. Context construction is not yet wired into a real model
-orchestration loop.
+semantic summarizer. Day 7 passes the resulting pinned context into the explicit
+bounded orchestration workflow through provider-independent contracts.
 
 ## Tool registry and conformance
 
@@ -309,13 +311,39 @@ write persists no partial run.
 Binding an active exact tool version clones the base immutable `AgentVersion`
 and its existing bindings under the agent-definition lock. The eligible query
 returns only same-team exact bindings whose current lifecycle is `ACTIVE` and
-whose activation run passed. Runtime actor authorization, live-health filtering,
-semantic routing, dispatch, and approval remain downstream responsibilities.
+whose activation run passed. Day 7 additionally filters a trusted development
+scope set and permits only read-only tools, then locks and revalidates the exact
+version immediately before dispatch. Production actor authorization, live-health
+filtering, semantic routing, and approval remain downstream responsibilities.
 
 The current resolver contains deterministic local `search_work_items` and
 `update_due_date` examples. It is not dynamic code upload or production service
 discovery; HTTP, MCP, queue, secret, and external SaaS adapters remain future
 implementations of the same ports.
+
+## Day 7 bounded orchestration and explicit execution
+
+Application ports define normalized model actions, orchestration requests, and
+the durable tool-call callback. Only `switchboard.adapters.orchestration` imports
+LangGraph. Its ephemeral typed graph permits either a direct response or one
+read-only tool call followed by a final response; it has an explicit recursion
+limit and no framework checkpointer. The deterministic model gateway makes both
+paths testable without credentials or network access.
+
+`RunTurn` is an explicit application workflow, not an HTTP background task. It
+compare-and-sets the turn and attempt to running, builds bounded context, loads
+eligible descriptors, and invokes the graph without an open database
+transaction. A requested tool first creates a durable `PENDING` invocation with
+a stable key. Under a short locked transaction, the application revalidates
+ownership, binding, lifecycle, conformance, scopes, and read-only effect, then
+commits `RUNNING` with `tool.started`. Adapter work occurs outside the
+transaction, followed by a short terminal invocation/event commit.
+
+Final assistant-message insertion, turn/attempt success, and `turn.completed`
+are atomic. Failure after committed progress appends one safe terminal
+`turn.failed`; tool arguments, outputs, provider exceptions, prompts, and hidden
+reasoning never enter public events. Automatic dispatch, crash recovery, real
+model providers, semantic selection, and mutating execution are deferred.
 
 ## Persistence ownership
 
@@ -364,7 +392,7 @@ Only when measurement justifies it:
 No microservice split is required merely to demonstrate seniority.
 
 
-## Implementation status after Day 6
+## Implementation status after Day 7
 
 Implemented:
 
@@ -405,6 +433,16 @@ Implemented:
 - bounded strict DTO validation, stable sanitized errors, development team
   ownership checks, deterministic pagination, and OpenAPI examples;
 - team-aware SSE preflight and external-client contract/concurrency coverage.
+- provider-independent model/orchestration contracts and a deterministic
+  structured model gateway;
+- a framework-isolated, bounded LangGraph adapter with direct and single-tool
+  paths and no durable framework state;
+- durable tool invocations with relational ownership, stable keys, canonical
+  immutable arguments, compare-and-set lifecycle transitions, and safe events;
+- locked exact-version read-only dispatch with trusted development scopes and no
+  transaction held across adapter execution;
+- explicit durable turn execution with pinned context, atomic terminal success,
+  safe partial failure, and end-to-end SSE/history coverage.
 
 Planned but not yet implemented:
 
@@ -415,9 +453,10 @@ Planned but not yet implemented:
 - event retention and production chunk-size tuning;
 - production tokenizers and semantic summarizers;
 - summary chaining, retention, deletion, and large-history optimization;
-- context integration into model orchestration;
-- semantic tool routing, runtime tool dispatch, authorization and health
-  filtering, policies, approvals, model adapters, evaluation, and rollout control;
+- semantic tool routing, production authorization and health filtering,
+  policies, approvals, real model providers, evaluation, and rollout control;
+- automatic execution dispatch, invocation recovery/retries, and
+  unknown-outcome reconciliation;
 - public registry-management APIs, production HTTP/MCP/queue adapters, and
   conformance retention or production telemetry policy.
 - production authentication/authorization, rate limits, quotas, and opaque

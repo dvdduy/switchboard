@@ -41,7 +41,7 @@ The current implementation does not yet substantiate the accepted-turn loss or
 canary objectives in production terms: API acceptance is durable, but automatic
 dispatch and recovery require a transactional outbox and worker claiming.
 
-## Day 6 API operations
+## Day 7 API and explicit execution operations
 
 - Apply migrations with `uv run alembic upgrade head` before starting the API.
 - Supply `X-Team-ID` on all conversation, turn, history, and event requests.
@@ -59,8 +59,18 @@ dispatch and recovery require a transactional outbox and worker claiming.
 - Message history is bounded to 100 items per request and advances with the
   exclusive `after_sequence` cursor.
 - Redis is not required for API command correctness or event replay.
+- Day 7 execution is invoked only through the application-level `RunTurn`
+  workflow by a trusted development runner/test with team and granted scopes;
+  there is no public execution endpoint or automatic worker claim.
+- The bounded workflow emits either direct response events or one read-only
+  tool lifecycle followed by response events. Mutating, external-side-effect,
+  and privileged tools are blocked.
+- Tool events carry stable identifiers and safe codes only. Arguments, results,
+  provider exceptions, prompts, and private reasoning are excluded.
+- A failed tool commits `tool.failed` before the turn closes with one
+  `turn.failed`; completed invocation progress remains durable.
 
-## Structured telemetry
+## Target structured telemetry
 
 Every event carries correlation identifiers:
 
@@ -73,7 +83,7 @@ Every event carries correlation identifiers:
 
 Sensitive values are redacted. Raw payload access is exceptional and audited.
 
-## Backpressure
+## Target backpressure
 
 The system uses:
 
@@ -86,7 +96,7 @@ The system uses:
 
 It must never create unbounded in-memory turn tasks.
 
-## Tool health
+## Target tool health
 
 Health combines:
 

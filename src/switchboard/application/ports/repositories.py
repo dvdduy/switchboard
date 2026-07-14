@@ -22,10 +22,12 @@ from switchboard.domain.identifiers import (
     TeamId,
     ToolConformanceRunId,
     ToolDefinitionId,
+    ToolInvocationId,
     ToolVersionId,
     TurnAttemptId,
     TurnId,
 )
+from switchboard.domain.tool_invocations import ToolInvocation
 from switchboard.domain.tools import (
     AgentToolBinding,
     EligibleTool,
@@ -244,6 +246,27 @@ class TurnRepository(Protocol):
         limit: int,
     ) -> tuple[ExecutionEvent, ...]:
         """Return events after an exclusive sequence cursor."""
+
+
+class ToolInvocationRepository(Protocol):
+    """Persistence operations for durable logical tool invocations."""
+
+    async def add(self, invocation: ToolInvocation) -> None:
+        """Persist one pending invocation before dispatch."""
+
+    async def get(self, invocation_id: ToolInvocationId) -> ToolInvocation | None:
+        """Return one invocation by identity."""
+
+    async def list_for_turn(self, turn_id: TurnId) -> tuple[ToolInvocation, ...]:
+        """Return invocations ordered by their turn-local number."""
+
+    async def update_lifecycle(
+        self,
+        *,
+        previous: ToolInvocation,
+        updated: ToolInvocation,
+    ) -> None:
+        """Persist a focused invocation lifecycle compare-and-set update."""
 
 
 class ToolRegistryRepository(Protocol):

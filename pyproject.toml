@@ -8,6 +8,7 @@ dependencies = [
     "alembic>=1.18.5",
     "fastapi",
     "jsonschema>=4.25.1",
+    "langgraph>=1.2,<2",
     "psycopg[binary]",
     "pydantic-settings",
     "redis",

@@ -31,11 +31,16 @@ from switchboard.domain.identifiers import (
     ToolConformanceCaseResultId,
     ToolConformanceRunId,
     ToolDefinitionId,
+    ToolInvocationId,
     ToolVersionId,
     TurnAttemptId,
     TurnId,
 )
 from switchboard.domain.json_values import mutable_json_value
+from switchboard.domain.tool_invocations import (
+    ToolInvocation,
+    ToolInvocationStatus,
+)
 from switchboard.domain.tools import (
     AgentToolBinding,
     IdempotencyMode,
@@ -469,6 +474,47 @@ def tool_version_from_record(record: Record) -> ToolVersion:
         manifest=tool_manifest_from_record(record["manifest"]),
         content_hash=cast(str, record["content_hash"]),
         created_at=cast(datetime, record["created_at"]),
+    )
+
+
+def tool_invocation_to_record(invocation: ToolInvocation) -> dict[str, object]:
+    return {
+        "id": invocation.id,
+        "turn_id": invocation.turn_id,
+        "attempt_id": invocation.attempt_id,
+        "invocation_number": invocation.invocation_number,
+        "tool_definition_id": invocation.tool_definition_id,
+        "tool_version_id": invocation.tool_version_id,
+        "arguments": mutable_json_value(invocation.arguments),
+        "idempotency_key": invocation.idempotency_key,
+        "authorized_scopes": list(invocation.authorized_scopes),
+        "status": invocation.status.value,
+        "created_at": invocation.created_at,
+        "started_at": invocation.started_at,
+        "completed_at": invocation.completed_at,
+        "result": (None if invocation.result is None else mutable_json_value(invocation.result)),
+        "failure_code": invocation.failure_code,
+    }
+
+
+def tool_invocation_from_record(record: Record) -> ToolInvocation:
+    result = record["result"]
+    return ToolInvocation(
+        id=ToolInvocationId(cast(UUID, record["id"])),
+        turn_id=TurnId(cast(UUID, record["turn_id"])),
+        attempt_id=TurnAttemptId(cast(UUID, record["attempt_id"])),
+        invocation_number=cast(int, record["invocation_number"]),
+        tool_definition_id=ToolDefinitionId(cast(UUID, record["tool_definition_id"])),
+        tool_version_id=ToolVersionId(cast(UUID, record["tool_version_id"])),
+        arguments=cast(Mapping[str, object], record["arguments"]),
+        idempotency_key=cast(str, record["idempotency_key"]),
+        authorized_scopes=tuple(cast(list[str], record["authorized_scopes"])),
+        status=ToolInvocationStatus(cast(str, record["status"])),
+        created_at=cast(datetime, record["created_at"]),
+        started_at=cast(datetime | None, record["started_at"]),
+        completed_at=cast(datetime | None, record["completed_at"]),
+        result=None if result is None else cast(Mapping[str, object], result),
+        failure_code=cast(str | None, record["failure_code"]),
     )
 
 

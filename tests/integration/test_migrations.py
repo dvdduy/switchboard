@@ -20,6 +20,7 @@ EXPECTED_DOMAIN_TABLES = {
     "tool_conformance_case_results",
     "tool_conformance_runs",
     "tool_definitions",
+    "tool_invocations",
     "tool_version_states",
     "tool_versions",
 }

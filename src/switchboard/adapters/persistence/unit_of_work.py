@@ -13,6 +13,7 @@ from switchboard.adapters.persistence.repositories import (
     SqlAlchemyCommandReceiptRepository,
     SqlAlchemyConversationRepository,
     SqlAlchemyConversationSummaryRepository,
+    SqlAlchemyToolInvocationRepository,
     SqlAlchemyToolRegistryRepository,
     SqlAlchemyTurnRepository,
 )
@@ -21,6 +22,7 @@ from switchboard.application.ports.repositories import (
     CommandReceiptRepository,
     ConversationRepository,
     ConversationSummaryRepository,
+    ToolInvocationRepository,
     ToolRegistryRepository,
     TurnRepository,
 )
@@ -45,6 +47,9 @@ class SqlAlchemyUnitOfWork:
         )
         self.turns: TurnRepository = SqlAlchemyTurnRepository(self._session)
         self.tools: ToolRegistryRepository = SqlAlchemyToolRegistryRepository(self._session)
+        self.tool_invocations: ToolInvocationRepository = SqlAlchemyToolInvocationRepository(
+            self._session
+        )
 
     async def __aenter__(self) -> Self:
         return self

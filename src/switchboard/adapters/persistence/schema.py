@@ -654,6 +654,9 @@ execution_events = Table(
         """
         kind IN (
             'turn.started',
+            'tool.started',
+            'tool.completed',
+            'tool.failed',
             'response.delta',
             'turn.completed',
             'turn.failed'
@@ -700,6 +703,107 @@ tool_versions = Table(
     CheckConstraint("version_number > 0", name="version_number_positive"),
     CheckConstraint("jsonb_typeof(manifest) = 'object'", name="manifest_is_object"),
     CheckConstraint("content_hash ~ '^[0-9a-f]{64}$'", name="content_hash_valid"),
+)
+
+
+tool_invocations = Table(
+    "tool_invocations",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column("turn_id", Uuid(as_uuid=True), nullable=False),
+    Column("attempt_id", Uuid(as_uuid=True), nullable=False),
+    Column("invocation_number", Integer, nullable=False),
+    Column("tool_definition_id", Uuid(as_uuid=True), nullable=False),
+    Column("tool_version_id", Uuid(as_uuid=True), nullable=False),
+    Column("arguments", JSONB, nullable=False),
+    Column("idempotency_key", String(200), nullable=False),
+    Column("authorized_scopes", JSONB, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=True),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("result", JSONB(none_as_null=True), nullable=True),
+    Column("failure_code", String(100), nullable=True),
+    ForeignKeyConstraint(
+        ["turn_id", "attempt_id"],
+        ["turn_attempts.turn_id", "turn_attempts.id"],
+        name="tool_invocation_attempt",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["tool_definition_id", "tool_version_id"],
+        ["tool_versions.tool_definition_id", "tool_versions.id"],
+        name="tool_invocation_tool_version",
+        ondelete="RESTRICT",
+    ),
+    UniqueConstraint("attempt_id", name="attempt_tool_invocation"),
+    UniqueConstraint("turn_id", "invocation_number", name="turn_invocation_number"),
+    UniqueConstraint("idempotency_key", name="tool_invocation_idempotency_key"),
+    CheckConstraint("invocation_number = 1", name="invocation_number_day_7"),
+    CheckConstraint("jsonb_typeof(arguments) = 'object'", name="arguments_is_object"),
+    CheckConstraint(
+        "idempotency_key ~ '^[A-Za-z0-9._:-]{1,200}$'",
+        name="idempotency_key_valid",
+    ),
+    CheckConstraint(
+        "jsonb_typeof(authorized_scopes) = 'array' "
+        "AND jsonb_array_length(authorized_scopes) BETWEEN 1 AND 32",
+        name="authorized_scopes_bounded_array",
+    ),
+    CheckConstraint(
+        "status IN ('pending', 'running', 'succeeded', 'failed')",
+        name="status_valid",
+    ),
+    CheckConstraint(
+        "result IS NULL OR jsonb_typeof(result) = 'object'",
+        name="result_is_object",
+    ),
+    CheckConstraint(
+        "failure_code IS NULL OR failure_code ~ '^[a-z][a-z0-9._-]{0,99}$'",
+        name="failure_code_valid",
+    ),
+    CheckConstraint(
+        """
+        (
+            status = 'pending'
+            AND started_at IS NULL
+            AND completed_at IS NULL
+            AND result IS NULL
+            AND failure_code IS NULL
+        )
+        OR (
+            status = 'running'
+            AND started_at IS NOT NULL
+            AND completed_at IS NULL
+            AND result IS NULL
+            AND failure_code IS NULL
+        )
+        OR (
+            status = 'succeeded'
+            AND started_at IS NOT NULL
+            AND completed_at IS NOT NULL
+            AND result IS NOT NULL
+            AND failure_code IS NULL
+        )
+        OR (
+            status = 'failed'
+            AND started_at IS NOT NULL
+            AND completed_at IS NOT NULL
+            AND result IS NULL
+            AND failure_code IS NOT NULL
+        )
+        """,
+        name="lifecycle_fields_match_status",
+    ),
+    CheckConstraint(
+        "started_at IS NULL OR started_at >= created_at",
+        name="started_at_not_before_created_at",
+    ),
+    CheckConstraint(
+        "completed_at IS NULL OR (started_at IS NOT NULL AND completed_at >= started_at)",
+        name="completed_at_not_before_started_at",
+    ),
+    Index("ix_tool_invocations_status", "status"),
 )
 
 

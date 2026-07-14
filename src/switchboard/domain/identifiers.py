@@ -12,6 +12,7 @@ ToolVersionId = NewType("ToolVersionId", UUID)
 ToolConformanceRunId = NewType("ToolConformanceRunId", UUID)
 ToolConformanceCaseResultId = NewType("ToolConformanceCaseResultId", UUID)
 AgentToolBindingId = NewType("AgentToolBindingId", UUID)
+ToolInvocationId = NewType("ToolInvocationId", UUID)
 
 ConversationId = NewType("ConversationId", UUID)
 MessageId = NewType("MessageId", UUID)

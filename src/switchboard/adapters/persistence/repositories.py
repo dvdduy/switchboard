@@ -20,6 +20,7 @@ from switchboard.adapters.persistence.schema import (
     tool_conformance_case_results,
     tool_conformance_runs,
     tool_definitions,
+    tool_invocations,
     tool_version_states,
     tool_versions,
     turn_attempts,
@@ -48,6 +49,8 @@ from switchboard.adapters.persistence.translators import (
     tool_conformance_run_to_record,
     tool_definition_from_record,
     tool_definition_to_record,
+    tool_invocation_from_record,
+    tool_invocation_to_record,
     tool_version_from_record,
     tool_version_state_from_record,
     tool_version_state_to_record,
@@ -60,6 +63,7 @@ from switchboard.adapters.persistence.translators import (
 from switchboard.application.errors import (
     ConversationNotFoundError,
     ToolDefinitionNotFoundError,
+    ToolInvocationLifecycleConflictError,
     ToolVersionLifecycleConflictError,
     TurnAttemptLifecycleConflictError,
     TurnEventStateError,
@@ -84,10 +88,13 @@ from switchboard.domain.identifiers import (
     TeamId,
     ToolConformanceRunId,
     ToolDefinitionId,
+    ToolInvocationId,
     ToolVersionId,
     TurnAttemptId,
     TurnId,
 )
+from switchboard.domain.json_values import mutable_json_value
+from switchboard.domain.tool_invocations import ToolInvocation
 from switchboard.domain.tools import (
     AgentToolBinding,
     EligibleTool,
@@ -613,6 +620,9 @@ class SqlAlchemyTurnRepository:
         if turn.status is TurnStatus.RUNNING:
             allowed_kinds = {
                 ExecutionEventKind.TURN_STARTED,
+                ExecutionEventKind.TOOL_STARTED,
+                ExecutionEventKind.TOOL_COMPLETED,
+                ExecutionEventKind.TOOL_FAILED,
                 ExecutionEventKind.RESPONSE_DELTA,
             }
         elif turn.status is TurnStatus.COMPLETED:
@@ -684,6 +694,89 @@ class SqlAlchemyTurnRepository:
         result = await self._session.execute(statement)
 
         return tuple(execution_event_from_record(record) for record in result.mappings())
+
+
+class SqlAlchemyToolInvocationRepository:
+    """Persists one bounded logical tool invocation per attempt."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, invocation: ToolInvocation) -> None:
+        await self._session.execute(
+            insert(tool_invocations).values(tool_invocation_to_record(invocation))
+        )
+
+    async def get(self, invocation_id: ToolInvocationId) -> ToolInvocation | None:
+        result = await self._session.execute(
+            select(tool_invocations).where(tool_invocations.c.id == invocation_id)
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else tool_invocation_from_record(record)
+
+    async def list_for_turn(self, turn_id: TurnId) -> tuple[ToolInvocation, ...]:
+        result = await self._session.execute(
+            select(tool_invocations)
+            .where(tool_invocations.c.turn_id == turn_id)
+            .order_by(tool_invocations.c.invocation_number)
+        )
+        return tuple(tool_invocation_from_record(record) for record in result.mappings())
+
+    async def update_lifecycle(
+        self,
+        *,
+        previous: ToolInvocation,
+        updated: ToolInvocation,
+    ) -> None:
+        previous_immutable = (
+            previous.id,
+            previous.turn_id,
+            previous.attempt_id,
+            previous.invocation_number,
+            previous.tool_definition_id,
+            previous.tool_version_id,
+            previous.arguments,
+            previous.idempotency_key,
+            previous.authorized_scopes,
+            previous.created_at,
+        )
+        updated_immutable = (
+            updated.id,
+            updated.turn_id,
+            updated.attempt_id,
+            updated.invocation_number,
+            updated.tool_definition_id,
+            updated.tool_version_id,
+            updated.arguments,
+            updated.idempotency_key,
+            updated.authorized_scopes,
+            updated.created_at,
+        )
+        if previous_immutable != updated_immutable:
+            raise ValueError("tool invocation lifecycle transition must preserve immutable fields")
+
+        result = await self._session.execute(
+            update(tool_invocations)
+            .where(
+                tool_invocations.c.id == previous.id,
+                tool_invocations.c.status == previous.status.value,
+                _matches_nullable(tool_invocations.c.started_at, previous.started_at),
+                _matches_nullable(tool_invocations.c.completed_at, previous.completed_at),
+                _matches_nullable(tool_invocations.c.failure_code, previous.failure_code),
+            )
+            .values(
+                status=updated.status.value,
+                started_at=updated.started_at,
+                completed_at=updated.completed_at,
+                result=(None if updated.result is None else mutable_json_value(updated.result)),
+                failure_code=updated.failure_code,
+            )
+            .returning(tool_invocations.c.id)
+        )
+        if result.scalar_one_or_none() is None:
+            raise ToolInvocationLifecycleConflictError(
+                f"tool invocation {previous.id} lifecycle changed after it was read"
+            )
 
 
 class SqlAlchemyToolRegistryRepository:

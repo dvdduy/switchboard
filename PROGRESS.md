@@ -4,8 +4,8 @@
 
 - **Current phase:** Phase 1 — Conversation Platform Foundations
 - **Current milestone:** Milestone 1 — Conversation platform
-- **Completed through:** Day 6
-- **Next session:** Day 7 — LangGraph agent loop
+- **Completed through:** Day 7
+- **Next session:** Day 8 — Policy guardrails and durable approval
 
 ## Progress log
 
@@ -18,6 +18,7 @@
 | 4 | Complete | Context windows as explicit product/reliability budgets; summaries as lossy derived artifacts with provenance | Immutable agent-version context policies, deterministic bounded assembler, durable prefix summaries, compatible reuse workflow | Ruff, mypy, 163 tests, PostgreSQL reconstruction and migration round-trip, container build | Pending approval: `feat(context): add token-budgeted conversation context management` | Explain turn-pinned context snapshots, mandatory recent context, summary provenance, and why summarization runs outside transactions | No production tokenizer or semantic summarizer, summary chaining/retention, large-history optimization, or model-loop integration |
 | 5 | Complete | A registry is a versioned safety contract; schema validation does not replace behavioral conformance | Team-owned tool definitions, immutable manifests, separate CAS lifecycle state, conformance history, immutable agent bindings, reference adapters, eligible query | Ruff, mypy, 216 tests, PostgreSQL migration/concurrency coverage, migration round-trip, container build | `d08a776` — `feat(tools): add versioned registry and conformance gates` | Explain immutable content versus mutable lifecycle, exact-version activation evidence, and safe idempotent adapter contracts | No runtime authorization/health filtering, public registry API, production HTTP/MCP/queue adapters, durable dispatch/recovery, or conformance retention/telemetry policy |
 | 6 | Complete | Public API contracts require durable acceptance, boundary idempotency, stable errors, and ownership-safe reads | Versioned create/continue commands, command receipts, ordered history, turn inspection, team-aware SSE, strict DTOs and OpenAPI | Ruff, mypy, 284 tests, PostgreSQL contract/concurrency coverage, migration round-trip, container build | Pending approval: `feat(api): add versioned conversation commands and history` | Explain why `202` means durable acceptance rather than execution, how database receipt uniqueness handles retries, and why external-client contracts do not expose persistence models | No production auth, rate limits/quotas, automatic outbox dispatch, durable worker claiming/recovery, or receipt/history retention policy |
+| 7 | Complete | Orchestration frameworks coordinate bounded steps but do not own durable platform truth | Provider-independent model/orchestration ports, isolated bounded LangGraph direct/one-tool loop, durable invocation lifecycle, locked read-only dispatch, explicit `RunTurn`, safe tool events | Ruff, mypy, 338 tests, PostgreSQL lifecycle/concurrency/E2E coverage, migration round-trip, container build | Pending approval: `feat(orchestration): add bounded LangGraph read-only agent loop` | Explain framework isolation, the `RUNNING` linearization point, stable logical invocation identity, short transactions, and safe partial failure | Explicit runner, fake provider, one read-only tool call, no semantic router, production identity/health, outbox recovery/retries, or retention policy |
 
 ## Milestones
 
@@ -48,7 +49,7 @@
 - [x] Context-window management
 - [x] Tool registry and conformance
 - [x] Shared conversation API
-- [ ] Orchestration adapter
+- [x] Orchestration adapter
 - [ ] Policy and approval
 - [ ] Phase integration
 
@@ -106,6 +107,15 @@
   uniqueness as the duplicate-command concurrency authority.
 - Require explicit development team context on conversation and event APIs,
   while documenting that it is not production authentication.
+- Keep LangGraph behind an application orchestration port; PostgreSQL and
+  Switchboard lifecycle/events remain the durable authority.
+- Bound Day 7 execution to direct response or one read-only call and use a
+  deterministic structured model gateway for reliable local tests.
+- Commit invocation intent before dispatch, then lock/revalidate the exact tool;
+  the `RUNNING` transition plus `tool.started` is the dispatch linearization point.
+- Never hold a transaction across context summarization, model calls, or tool
+  calls, and exclude arguments, results, exceptions, prompts, and private
+  reasoning from public tool events.
 
 ## Known debt
 
@@ -117,21 +127,26 @@
 - No transactional outbox exists yet.
 - No durable worker claiming or recovery exists yet.
 - Event observers poll PostgreSQL before a future Redis notification optimization.
-- Durable execution uses a deterministic simulator rather than a real model provider.
+- Orchestrated execution uses a deterministic structured model gateway rather
+  than a real model provider; the earlier simulator remains a test utility.
 - Execution-event retention and production chunk-size tuning are not defined yet.
 - Agent versions do not yet contain prompt, model, tool, router, and policy-bundle configuration.
 - Context counting and summarization are deterministic development strategies,
   not production-provider tokenization or semantic summarization.
 - Summary chaining, retention/deletion, and large-history performance policy are
   not defined.
-- Context reconstruction is not yet connected to a real model orchestration loop.
-- Tool eligibility currently covers binding, team ownership, active lifecycle,
-  and successful conformance; runtime actor authorization and health are deferred.
+- Context reconstruction is connected to the explicit Day 7 orchestration loop,
+  but not to a real provider or automatic worker.
+- Tool eligibility and dispatch use trusted development scopes and exact locked
+  revalidation; production actor authorization and live health are deferred.
 - Tool management is application-only; there is no public registry API.
 - Only deterministic local reference adapters exist. HTTP, MCP, queue, and real
   external SaaS adapters are not implemented.
-- Tool dispatch, durable invocation recovery, and production unknown-outcome
-  reconciliation are not implemented; the mutating reference adapter is in-memory.
+- Explicit read-only tool dispatch is implemented. Durable invocation recovery,
+  retries, mutating dispatch/approval, and production unknown-outcome
+  reconciliation are not; the mutating reference adapter remains in-memory.
+- The graph permits only zero or one tool call and has no semantic router,
+  dynamic replanning, parallel branches, or durable framework checkpoints.
 - Conformance history has no retention policy or production telemetry/duration strategy.
 - Manifest fields do not include credential configuration, but semantic secret
   scanning of arbitrary descriptions or schema annotations is not implemented.

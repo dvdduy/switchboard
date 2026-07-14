@@ -5,6 +5,31 @@ class ApplicationError(Exception):
     """Base class for application workflow failures."""
 
 
+class ModelGatewayError(ApplicationError):
+    """Base class for safe normalized model-boundary failures."""
+
+
+class MalformedModelOutputError(ModelGatewayError):
+    """Raised when provider output cannot become one supported action."""
+
+    def __init__(self) -> None:
+        super().__init__("model output did not match the structured action contract")
+
+
+class ModelGatewayUnavailableError(ModelGatewayError):
+    """Raised when the configured model gateway cannot produce an action."""
+
+    def __init__(self) -> None:
+        super().__init__("model gateway is unavailable")
+
+
+class OrchestrationStepLimitError(ApplicationError):
+    """Raised when an orchestration run exceeds its bounded step count."""
+
+    def __init__(self) -> None:
+        super().__init__("orchestration step limit exceeded")
+
+
 class InvalidIdempotencyKeyError(ApplicationError):
     """Raised when an idempotency key violates the public command contract."""
 
@@ -124,3 +149,15 @@ class ToolAlreadyBoundError(ApplicationError):
 
 class ToolVersionLifecycleConflictError(ApplicationError):
     """Raised when tool lifecycle state changed after it was read."""
+
+
+class ToolInvocationLifecycleConflictError(ApplicationError):
+    """Raised when an invocation lifecycle changed after it was read."""
+
+
+class ToolDispatchError(ApplicationError):
+    """Raised with a stable safe code when one tool call cannot complete."""
+
+    def __init__(self, failure_code: str) -> None:
+        self.failure_code = failure_code
+        super().__init__(f"tool dispatch failed: {failure_code}")

@@ -172,17 +172,19 @@ Durable lifecycle of processing one user turn.
 **Key fields:** `turn_id`, `conversation_id`, `status`, `created_at`,
 `completed_at`, and `next_event_sequence`. Physical retries are represented by
 separate `TurnAttempt` records.
-**Invariant:** State changes follow the approved transition graph. The Day 3
-simulator commits lifecycle changes and their public execution events atomically.
+**Invariant:** State changes follow the approved transition graph. Execution
+workflows commit lifecycle changes and their public execution events atomically.
 
 ### ExecutionEvent
 
 Immutable audit and replay record owned by one logical turn and optionally linked
 to the physical attempt that emitted it.
 
-**Implemented kinds:** `turn.started`, `response.delta`, `turn.completed`, and
-`turn.failed`. Payloads are recursively immutable and JSON-compatible; they
-contain stable public data and never private model reasoning.
+**Implemented kinds:** `turn.started`, `response.delta`, `tool.started`,
+`tool.completed`, `tool.failed`, `turn.completed`, and `turn.failed`. Payloads
+are recursively immutable and JSON-compatible. Tool events expose only stable
+invocation/tool identifiers and safe failure codes; no public event contains
+arguments, tool output, prompts, provider exceptions, or private reasoning.
 **Invariant:** Positive sequence numbers are unique and monotonic within a turn.
 An event attempt, when present, must belong to the same turn. A turn has at most
 one start event and one terminal event.
@@ -203,10 +205,24 @@ Durable authorization/confirmation artifact.
 
 ### ToolInvocation
 
-One logical invocation, possibly with multiple delivery attempts.
+One durable logical invocation owned by an exact turn attempt and exact tool
+version. Day 7 records a positive invocation number, canonical immutable JSON
+arguments, a stable platform-generated idempotency key, the authorized scope
+snapshot, lifecycle timestamps, and either a normalized result or safe failure
+code.
 
-**Contains:** logical invocation ID, stable idempotency key, tool version, arguments, status, dispatch attempts, normalized result, external operation reference.  
-**Invariant:** Retries of one logical invocation reuse its idempotency key.
+The implemented lifecycle is `PENDING → RUNNING → SUCCEEDED|FAILED`. `PENDING`
+commits before adapter execution. The exact eligible tool is locked and
+revalidated when compare-and-setting `RUNNING`; that transition and
+`tool.started` are atomic. Adapter execution holds no database transaction, and
+the terminal state commits with `tool.completed` or `tool.failed`.
+
+**Invariants:** Day 7 permits at most one invocation per attempt. Composite
+foreign keys enforce attempt/turn and tool-version/definition ownership. Stable
+keys are globally unique. Public events contain only stable invocation/tool IDs
+and safe failure codes—never arguments, output, prompts, provider exceptions, or
+private reasoning. Delivery attempts, retries, external operations, and unknown
+outcome recovery are deferred.
 
 ### EvalDatasetVersion
 
@@ -255,7 +271,7 @@ Release identifies a candidate configuration bundle. Deployment records stage, t
 - How long should approval requests and execution events be retained?
 
 
-## Implementation status after Day 6
+## Implementation status after Day 7
 
 Implemented durable entities:
 
@@ -270,7 +286,8 @@ Conversation
 ├── CommandReceipt
 └── Turn
     ├── TurnAttempt
-    └── ExecutionEvent
+    ├── ExecutionEvent
+    └── ToolInvocation
 
 Team
 └── ToolDefinition
@@ -330,11 +347,18 @@ Implemented invariants:
   existing bindings under lock;
 - eligible manifests require an exact binding, matching team, `ACTIVE` state,
   and successful activation conformance.
+- bounded context and eligible read-only descriptors feed a framework-isolated
+  direct-or-one-tool orchestration graph;
+- tool invocations have stable identity, canonical arguments, locked lifecycle
+  transitions, relational ownership, and safe public events;
+- no transaction spans a model or tool adapter call;
+- final assistant output, successful lifecycle, and `turn.completed` are atomic,
+  while committed partial progress is preserved before durable failure.
 
 Not implemented yet: transactional outbox dispatch, durable worker claiming and
 recovery, real model-provider execution, Redis event notifications, event
 retention, production chunk tuning, production token counting, semantic
-summarization, summary retention/chaining, model-loop context integration,
-routing decisions, runtime authorization/health filtering, durable tool
-invocations, production adapters, approvals, evaluation entities, and release
-entities.
+summarization, summary retention/chaining, semantic routing decisions,
+production authorization/health filtering, mutating dispatch and approval,
+durable invocation recovery/retries, production adapters, evaluation entities,
+and release entities.

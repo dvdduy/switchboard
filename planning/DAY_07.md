@@ -1,6 +1,6 @@
 # Day 7 — Framework-Isolated LangGraph Agent Loop
 
-**Status:** Planned
+**Status:** Complete
 **Phase:** Phase 1 — Conversation Platform Foundations
 **Prerequisites:** Days 4–6 complete
 
@@ -32,7 +32,7 @@ versioned API, durable SSE, and deterministic reference tools. There is no
 policy approval, semantic router, durable outbox/worker recovery, or real model
 provider yet.
 
-## Provisional accepted direction
+## Accepted direction
 
 1. Define an application-level `AgentOrchestrator` port.
 2. Put LangGraph entirely behind an adapter.
@@ -47,22 +47,121 @@ provider yet.
 10. Public tool events contain redacted stable data, never hidden reasoning.
 11. Bound maximum steps and one tool call.
 12. Execution starts explicitly from worker/demo/tests, not HTTP background work.
+13. Use only the base LangGraph package; do not add LangChain or a provider SDK.
+14. Compile a custom typed `StateGraph` without a checkpointer and invoke it
+    asynchronously with an explicit recursion limit.
+15. Pass a trusted development execution context with team and granted scopes;
+    missing required scopes deny dispatch without claiming production auth.
+16. Revalidate and lock exact tool eligibility when authorizing dispatch. The
+    committed `RUNNING` invocation is the linearization point: a disable that
+    wins first blocks dispatch; a later disable affects future invocations.
+17. Never hold a database transaction across context summarization, model calls,
+    or tool calls.
 
-## Design questions to resolve
+## Resolved contracts
 
-1. Minimum invocation lifecycle/outcome taxonomy.
-2. Public event kinds for context/tool progress.
-3. Response chunk integration with the existing producer.
-4. Safe LangGraph state shape using durable IDs.
-5. Whether coarse `TurnStatus` remains sufficient today.
+### Framework and state ownership
+
+- Only `switchboard.adapters.orchestration` may import LangGraph.
+- Domain and application code use provider/framework-independent frozen
+  contracts and protocols.
+- LangGraph state contains typed JSON-compatible values and durable identifiers,
+  not SQLAlchemy sessions, repositories, mutable domain entities, or provider
+  message/tool-call objects.
+- The graph is ephemeral for one explicit run. Switchboard PostgreSQL records
+  are the only durable authority; LangGraph checkpointing and thread memory are
+  deferred to the Day 9 resume design.
+- The base dependency is constrained to `langgraph>=1.2,<2` and locked by `uv`.
+
+### Bounded graph
+
+The only supported paths are:
+
+```text
+model action
+├── Respond ────────────────────────────────→ finish
+└── CallTool → durable read-only dispatch
+               → final model Respond ──────→ finish
+```
+
+The first model action is exactly `Respond` or `CallTool`. The final model action
+must be `Respond`; another tool request is rejected. The graph permits zero or
+one tool call, no parallel branches, and uses an explicit low recursion limit in
+addition to application-level action validation.
+
+### Provider-independent boundaries
+
+- `ModelGateway` accepts a bounded normalized request and returns `Respond` or
+  `CallTool`.
+- `AgentOrchestrator` accepts bounded context plus eligible tool descriptors and
+  returns final response text plus whether a tool was called. Durable invocation
+  identity remains owned by the application callback.
+- `ToolCallHandler` is the callback through which the adapter requests one
+  durable invocation. It validates and persists before calling an installed
+  adapter; LangGraph never dispatches a tool directly.
+- A deterministic fake model gateway provides direct, tool, malformed, and
+  failure behavior without credentials or network access.
+
+### Tool invocation lifecycle
+
+```text
+PENDING → RUNNING → SUCCEEDED
+                  └→ FAILED
+```
+
+One invocation records its logical identity, owning turn and attempt, invocation
+number, exact tool definition/version, canonical arguments, stable
+platform-generated key, required/authorized scope snapshot, lifecycle
+timestamps, and normalized result or safe failure code. Day 7 permits at most
+one invocation per attempt.
+
+`PENDING` commits before external dispatch. A locked final eligibility check,
+`RUNNING` transition, and `tool.started` event commit atomically. The tool call
+runs without an open transaction. Normalized success or failure is then
+committed with its corresponding safe event.
+
+### Public event contract
+
+Add only:
+
+- `tool.started` — stable invocation and exact tool identifiers;
+- `tool.completed` — stable invocation identifier;
+- `tool.failed` — stable invocation identifier and safe failure code.
+
+No event contains arguments, tool output, prompts, provider exceptions, or
+private reasoning. Direct execution remains `turn.started`, zero or more
+`response.delta`, and `turn.completed`. Tool execution inserts the tool events
+before response deltas. Every failure closes with the existing single
+`turn.failed` terminal event.
+
+### Completion and failure
+
+- Reuse the existing response chunker and locked event sequence allocation.
+- Final assistant-message insertion, turn/attempt success, and
+  `turn.completed` commit atomically.
+- Failure after start preserves committed invocation progress and records a safe
+  durable turn/attempt failure.
+- The existing coarse `RECEIVED`, `RUNNING`, and terminal turn statuses remain
+  sufficient. Routing, approval, and fine-grained orchestration states are not
+  added on Day 7.
 
 ## Build checkpoints
 
 ### Checkpoint 0 — Orchestration boundary design
 
-Inspect current official LangGraph APIs, map direct/single-tool flows, define
-termination and normalized model/tool contracts, separate durable versus
-ephemeral state, and record an ADR if architecture changes.
+Completed:
+
+- inspected the current official `StateGraph`, async invocation, recursion, and
+  checkpointer APIs;
+- selected the base package without LangChain/provider dependencies;
+- mapped direct and single-read-only-tool paths and termination;
+- froze framework ownership, normalized ports, invocation lifecycle, event
+  payloads, transaction boundaries, scope handling, and disable/dispatch
+  concurrency semantics;
+- added an architecture guard allowing LangGraph imports only in the
+  orchestration adapter;
+- confirmed no ADR is required because this applies the existing modular
+  monolith/adapter decision rather than changing it.
 
 ### Checkpoint 1 — Model and orchestration ports
 
@@ -76,7 +175,14 @@ Add logical invocation ID, turn/attempt/tool ownership, canonical arguments,
 stable key, lifecycle, normalized result/failure, timestamps, migration,
 repositories, translators, constraints, focused updates, and redaction.
 
-### Checkpoint 3 — LangGraph adapter
+### Checkpoint 3 — Durable read-only dispatch service
+
+Validate the exact selected tool and canonical arguments, require read-only
+effect and granted scopes, lock/revalidate eligibility, persist before dispatch,
+invoke under the manifest timeout without an open transaction, validate
+normalized output, and persist safe success/failure.
+
+### Checkpoint 4 — LangGraph adapter
 
 Build bounded nodes:
 
@@ -89,20 +195,21 @@ Build bounded nodes:
 Graph state contains safe references/data, not sessions or domain entities tied
 to the framework.
 
-### Checkpoint 4 — Durable run-turn workflow
+### Checkpoint 5 — Durable run-turn workflow
 
 Load and compare-and-set start turn/attempt, build bounded context, load eligible
 tools, run adapter, persist invocation before/after dispatch, emit committed
 events, atomically append final message/terminal success, record durable failure,
 and never execute a disallowed effect.
 
-### Checkpoint 5 — Direct and read-only end-to-end tests
+### Checkpoint 6 — Contract, concurrency, and end-to-end tests
 
 Prove direct response, `search_work_items`, argument validation, disabled/
 unbound/mutating rejection, malformed action, loop bound, SSE replay,
-persistence across sessions, and deterministic fixtures.
+persistence across sessions, duplicate-start exclusion, missing scopes, timeout,
+invalid output, safe partial failure, and deterministic fixtures.
 
-### Checkpoint 6 — Documentation and verification
+### Checkpoint 7 — Documentation and verification
 
 Update architecture, domain, event catalog, requirements evidence, operations,
 `PROGRESS.md`, and this plan. Record debt: explicit runner, fake provider, one
@@ -122,33 +229,60 @@ tool, read-only only, no semantic router.
 
 ## Migration impact
 
-Expected `tool_invocations`, possibly new event kinds and coarse lifecycle
-extensions.
+Add `tool_invocations` with relational ownership, lifecycle/timestamp checks,
+one invocation per attempt for Day 7, canonical JSON arguments/results, and
+focused lifecycle updates. Extend the execution-event kind constraint for the
+three public tool events. Do not add LangGraph checkpoint tables, outbox/claim
+tables, approval records, or new coarse turn statuses.
+
+## Public contract impact
+
+Do not add an HTTP execution endpoint and do not change Day 6 command/read DTOs.
+API acceptance still returns `202` without starting execution. After an explicit
+run, the existing history endpoint exposes the final assistant message and the
+existing SSE endpoint may deliver the three new stable tool event kinds while
+preserving ordering and exclusive reconnect cursors.
 
 ## Security and safety considerations
 
 Model-selected tools/arguments and tool output are untrusted. Only active,
-bound, scoped, read-only tools execute. Redact sensitive values, bound steps,
-tokens, timeout, and payloads, and never persist chain-of-thought.
+bound, scoped, read-only tools execute. Final dispatch rechecks the exact pinned
+version under lock. Redact sensitive values from events/logs/errors, bound
+steps, text, candidates, arguments, timeout, and payloads, validate tool output,
+and never persist chain-of-thought. Malicious tool output is data only and
+cannot request a second tool or expand authority.
 
 ## Out of scope
 
-Mutations, approval, semantic retrieval/confidence, multiple tools, dynamic
-replanning, real provider credentials, durable worker recovery, unknown-outcome
-reconciliation, and parallel branches.
+Mutations, approval/policy decisions, semantic retrieval/confidence, multiple
+tools, dynamic replanning, real provider credentials, durable outbox/worker
+claiming/recovery, LangGraph checkpointing, unknown-outcome reconciliation,
+tool retries, public execution endpoints, production actor authentication,
+parallel branches, and provider streaming objects.
 
 ## Definition of done
 
-- [ ] LangGraph is isolated to an adapter.
-- [ ] Direct and one read-only tool path work.
-- [ ] Context/tools are pinned, eligible, and reproducible.
-- [ ] Invocation is durable with a stable idempotency key.
-- [ ] Mutating tools cannot execute.
-- [ ] Graph is bounded.
-- [ ] Final message and terminal success are atomic.
-- [ ] Events are safe/stable.
-- [ ] All adapter, persistence, E2E, architecture, and quality gates pass.
-- [ ] Documentation and `PROGRESS.md` are accurate.
+- [x] LangGraph is isolated to an adapter.
+- [x] Direct and one read-only tool path work.
+- [x] Context/tools are pinned, eligible, and reproducible.
+- [x] Invocation is durable with a stable idempotency key.
+- [x] Mutating tools cannot execute.
+- [x] Graph is bounded.
+- [x] Final message and terminal success are atomic.
+- [x] Events are safe/stable.
+- [x] All adapter, persistence, E2E, architecture, and quality gates pass.
+- [x] Documentation and `PROGRESS.md` are accurate.
+
+## Completion evidence
+
+- `uv run ruff format .` — 151 files unchanged;
+- `uv run ruff check .` — clean;
+- `uv run mypy` — clean across 84 source files;
+- `uv run pytest` — 338 passed;
+- `uv run pytest tests/integration -q` — 83 passed;
+- Alembic head upgrade, one-revision downgrade, and re-upgrade — clean;
+- `wsl docker build --tag switchboard:local .` — clean (native PowerShell
+  `docker` was unavailable, so the documented build ran through WSL).
 
 ## Suggested commit
 
@@ -163,4 +297,7 @@ box.
 ## Assumptions to revisit
 
 Semantic routing will narrow candidates; Day 8 adds durable approval; Day 9 adds
-persisted multi-step resume instead of ephemeral graph memory.
+persisted multi-step resume instead of ephemeral graph memory. The explicit
+runner and trusted development scope context are not durable dispatch or
+production identity. Agent versions still do not pin complete prompt/model/
+orchestrator configuration, and invocation/result retention remains undefined.

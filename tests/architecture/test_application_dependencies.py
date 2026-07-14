@@ -8,6 +8,8 @@ APPLICATION_ROOT = Path("src/switchboard/application")
 FORBIDDEN_IMPORT_PREFIXES = (
     "alembic",
     "fastapi",
+    "langchain",
+    "langgraph",
     "psycopg",
     "redis",
     "sqlalchemy",

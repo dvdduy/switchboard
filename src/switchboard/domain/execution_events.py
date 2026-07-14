@@ -20,6 +20,9 @@ class ExecutionEventKind(StrEnum):
     """Stable public event names exposed by Switchboard."""
 
     TURN_STARTED = "turn.started"
+    TOOL_STARTED = "tool.started"
+    TOOL_COMPLETED = "tool.completed"
+    TOOL_FAILED = "tool.failed"
     RESPONSE_DELTA = "response.delta"
     TURN_COMPLETED = "turn.completed"
     TURN_FAILED = "turn.failed"

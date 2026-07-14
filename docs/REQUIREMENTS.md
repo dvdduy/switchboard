@@ -25,6 +25,9 @@ preflight, and an external-client PostgreSQL test that explicitly executes an
 accepted turn before consuming its terminal stream. Automatic dispatch remains
 deferred because no transactional outbox or durable worker claiming exists.
 
+Day 7 strengthens FR-002 by replaying the committed read-only tool lifecycle and
+assistant output through the same ordered reconnectable SSE contract.
+
 Day 4 evidence for FR-005: immutable agent-version context policies, explicit
 budget failures, deterministic newest-suffix selection, provenance-bearing
 durable prefix summaries, turn-pinned message cutoffs, compatible-summary reuse,
@@ -51,6 +54,11 @@ only the binding/team/lifecycle/conformance portion of FR-014; actor
 authorization, health filtering, routing traces, and semantic routing remain
 future work.
 
+Day 7 partially strengthens FR-014: explicit execution accepts a trusted
+development scope set, filters to active bound read-only versions, and locks and
+revalidates the exact version before dispatch. This is not production actor
+authorization, live-health filtering, or a semantic routing trace.
+
 ### Routing and orchestration
 
 | ID | Priority | Requirement | Acceptance signal |
@@ -60,6 +68,11 @@ future work.
 | FR-022 | P0 | Attach calibrated confidence and candidate scores to routing decisions. | Reports include accepted coverage, fallback rate, and false-execution rate. |
 | FR-023 | P0 | Support multi-step workflows and pauses for approval. | An interrupted workflow resumes from persisted state rather than restarting completed steps. |
 | FR-024 | P1 | Run candidate routers in shadow mode without executing their proposed tools. | Current and candidate routing choices are compared on live-like traffic. |
+
+Day 7 does not claim FR-020 through FR-024. It supplies a bounded orchestration
+adapter over exact eligible descriptors and deterministic structured
+`Respond`/`CallTool` actions, without semantic retrieval, calibrated confidence,
+multi-step planning, or persisted pauses.
 
 ### Policies and safety
 
@@ -71,6 +84,11 @@ future work.
 | FR-033 | P0 | Treat tool output and retrieved content as untrusted input. | Malicious tool output cannot alter platform permissions or bypass confirmation. |
 | FR-034 | P0 | Record an audit trail for mutating and privileged operations. | The audit record identifies requester, approver, policy, tool version, arguments summary, and outcome. |
 
+Day 7 partially evidences FR-030 and FR-033: manifest effect classification
+blocks every non-read-only invocation, tool output is normalized and treated as
+data, and the graph cannot accept a second tool request. Full policy decisions,
+production identity, and confirmations remain Day 8 work.
+
 ### Durable execution
 
 | ID | Priority | Requirement | Acceptance signal |
@@ -81,6 +99,12 @@ future work.
 | FR-043 | P0 | Classify tool outcomes including validation, unauthorized, rate-limited, retriable, terminal, timeout, and unknown outcome. | The orchestrator has explicit behavior for every category. |
 | FR-044 | P0 | Reconcile unknown outcomes before retrying external mutations. | A simulated lost response after successful mutation does not produce a duplicate resource. |
 | FR-045 | P0 | Distinguish client disconnect, explicit cancellation, and worker failure. | Disconnecting an SSE client does not implicitly cancel an approved mutation. |
+
+Day 7 strengthens FR-040 and partially evidences FR-042/FR-043 with durable
+tool-invocation identity, a stable platform-generated key, compare-and-set
+lifecycle transitions, and safe success/failure events. It intentionally does
+not claim retry recovery, the full outcome taxonomy, outbox delivery, or unknown
+outcome reconciliation.
 
 ### Evaluation and release
 
@@ -120,6 +144,10 @@ future work.
 | NFR-010 | P0 | No component claims exactly-once delivery across arbitrary external systems. |
 | NFR-011 | P1 | The platform exposes per-agent SLO measurements for latency, completion, fallback, policy denial, and unknown outcomes. |
 | NFR-012 | P2 | The architecture can later separate control-plane and data-plane deployment without changing public contracts. |
+
+Day 7 evidence for NFR-009 includes architecture tests that restrict LangGraph
+to its adapter and provider/framework-independent application ports exercised by
+deterministic fakes.
 
 ## Initial performance targets
 

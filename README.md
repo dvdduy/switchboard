@@ -13,13 +13,16 @@ The current implementation provides:
 - team-owned immutable tool manifests with deterministic conformance;
 - exact-version agent bindings and an active-bound eligible-tool query;
 - deterministic read-only and idempotent mutating reference adapters;
+- a framework-isolated bounded LangGraph loop with deterministic model actions;
+- durable explicit turn execution through either a direct response or one
+  active, bound, scoped, read-only tool invocation;
 - a versioned conversation API with durable idempotent commands, ordered
   history reads, turn inspection, and team-aware reconnectable SSE.
 
 Planned capabilities include:
 
-- semantic tool routing and runtime invocation;
-- safe and durable tool execution;
+- semantic tool routing;
+- automatic durable worker dispatch and recovery;
 - policy enforcement;
 - evaluation and regression detection;
 - observability and rollout safety.
@@ -140,8 +143,9 @@ uses a durable provenance-bearing summary for an omitted older prefix.
 The counter and summarizer boundaries are provider-independent. The included
 summarizer is deterministic and extractive for development and tests; it is not
 a production model tokenizer or semantic-memory system. Context reconstruction
-is currently an application workflow and is not exposed as a public endpoint or
-connected to a real model loop.
+is consumed by the explicit Day 7 run-turn workflow. It is not exposed as a
+public endpoint, and the model gateway remains a deterministic structured fake
+rather than a real provider.
 
 ## Tool registry
 
@@ -152,10 +156,29 @@ tool bindings. JSON Schema Draft 2020-12 validation is bounded, remote reference
 are rejected, and diagnostics do not copy rejected values.
 
 The included `search_work_items` and `update_due_date` adapters are deterministic
-local examples. The latter demonstrates stable idempotency keys and
-reconciliation, but its mutation state is intentionally in-memory. No public
-tool-management endpoint, semantic router, runtime authorization/health filter,
-or durable production tool dispatcher exists yet.
+local examples. Day 7 can durably invoke `search_work_items`; mutating,
+external-side-effect, and privileged tools remain blocked. The mutating example
+demonstrates stable idempotency keys and reconciliation only through conformance,
+and its state is intentionally in-memory. No public tool-management or execution
+endpoint, semantic router, production authentication/authorization, live-health
+filter, or production adapter exists yet.
+
+## Explicit Day 7 execution
+
+The conversation API still returns `202` after durable acceptance and never
+starts execution. The application-level `RunTurn` workflow must be invoked by a
+trusted development runner or test with the accepted turn, pending attempt,
+team, and granted scopes. It builds the pinned bounded context and runs either:
+
+```text
+Respond -> response.delta* -> turn.completed
+CallTool -> tool.started -> tool.completed -> response.delta* -> turn.completed
+```
+
+Tool failures emit `tool.failed` with a safe code before the turn closes with
+`turn.failed`. Tool events never contain arguments, outputs, provider errors, or
+private reasoning. There is intentionally no CLI or HTTP execution command yet;
+automatic claiming and crash recovery require the future transactional outbox.
 
 ## Quality gate
 
@@ -172,7 +195,7 @@ durable worker claiming/recovery, a real model provider, Redis event
 notification, event or summary retention policies, production chunk-size
 tuning, production tokenizers, semantic summarization, or summary chaining.
 Tool-registry debt also includes production HTTP/MCP/queue adapters, durable
-dispatch and recovery, runtime authorization and health filtering, and
+dispatch recovery, production authorization and health filtering, and
 conformance retention/telemetry policy.
 The manifest shape contains no credential configuration, but semantic secret
 scanning of arbitrary description or schema text is also deferred.

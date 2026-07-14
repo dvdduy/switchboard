@@ -8,6 +8,7 @@ from switchboard.application.ports.repositories import (
     CommandReceiptRepository,
     ConversationRepository,
     ConversationSummaryRepository,
+    ToolInvocationRepository,
     ToolRegistryRepository,
     TurnRepository,
 )
@@ -22,6 +23,7 @@ class UnitOfWork(Protocol):
     summaries: ConversationSummaryRepository
     turns: TurnRepository
     tools: ToolRegistryRepository
+    tool_invocations: ToolInvocationRepository
 
     async def __aenter__(self) -> Self:
         """Enter the transactional scope."""
