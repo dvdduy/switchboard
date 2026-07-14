@@ -41,7 +41,7 @@ The current implementation does not yet substantiate the accepted-turn loss or
 canary objectives in production terms: API acceptance is durable, but automatic
 dispatch and recovery require a transactional outbox and worker claiming.
 
-## Day 7 API and explicit execution operations
+## Day 8 API, explicit execution, and approval operations
 
 - Apply migrations with `uv run alembic upgrade head` before starting the API.
 - Supply `X-Team-ID` on all conversation, turn, history, and event requests.
@@ -49,6 +49,9 @@ dispatch and recovery require a transactional outbox and worker claiming.
   authentication and authorization.
 - Supply a unique opaque `Idempotency-Key` for each logical create or continue
   command. Safe retries reuse the exact key and exact request.
+- Approval decisions additionally require `X-Actor-ID` and an idempotency key.
+  These headers are development fixtures, not authentication or approval-role
+  enforcement.
 - A `202` response proves durable acceptance, not execution start. Until outbox
   dispatch exists, accepted turns remain `received` unless an explicit runner
   processes them.
@@ -59,12 +62,16 @@ dispatch and recovery require a transactional outbox and worker claiming.
 - Message history is bounded to 100 items per request and advances with the
   exclusive `after_sequence` cursor.
 - Redis is not required for API command correctness or event replay.
-- Day 7 execution is invoked only through the application-level `RunTurn`
-  workflow by a trusted development runner/test with team and granted scopes;
+- Day 8 execution is invoked only through the application-level `RunTurn`
+  workflow by a trusted development runner/test with team, actor, and granted scopes;
   there is no public execution endpoint or automatic worker claim.
-- The bounded workflow emits either direct response events or one read-only
-  tool lifecycle followed by response events. Mutating, external-side-effect,
-  and privileged tools are blocked.
+- The bounded workflow emits a direct response, one read-only tool lifecycle, or
+  an `approval.required` pause for a mutation. External-side-effect and
+  privileged tools remain denied.
+- `GET /api/v1/approvals/{id}` exposes only safe summary fields. Decision
+  commands approve or reject; rejection and lazy expiry cancel without dispatch.
+- Approval consumption and `tool.started` commit before adapter dispatch. A
+  crash after that boundary is not automatically recovered or blindly retried.
 - Tool events carry stable identifiers and safe codes only. Arguments, results,
   provider exceptions, prompts, and private reasoning are excluded.
 - A failed tool commits `tool.failed` before the turn closes with one

@@ -18,6 +18,7 @@ classDiagram
     class ExecutionEvent
     class RoutingDecision
     class ToolInvocation
+    class PolicyEvaluation
     class ApprovalRequest
     class EvalDataset
     class EvalDatasetVersion
@@ -42,7 +43,9 @@ classDiagram
     TurnExecution "1" --> "*" ExecutionEvent
     TurnExecution "1" --> "0..1" RoutingDecision
     TurnExecution "1" --> "*" ToolInvocation
+    ToolInvocation "1" --> "*" PolicyEvaluation
     TurnExecution "1" --> "*" ApprovalRequest
+    PolicyEvaluation "1" --> "0..1" ApprovalRequest
     EvalDataset "1" --> "*" EvalDatasetVersion
     EvalDatasetVersion "1" --> "*" EvalCase
     EvalRun "1" --> "*" EvalResult
@@ -158,7 +161,8 @@ does not contain private model reasoning.
 Immutable durable authority for one accepted public command. It stores team,
 operation, scope, SHA-256 idempotency-key hash, a versioned canonical request
 fingerprint, immutable result identifiers, and creation time. Create commands
-use a fixed scope; continuation commands use the conversation identity.
+use a fixed scope; continuation commands use conversation identity; approval
+decisions use approval identity and store the deciding actor and decision.
 
 **Invariant:** One receipt exists per team, operation, scope, and key hash.
 Receipt insertion and the accepted message/turn graph commit atomically.
@@ -174,14 +178,18 @@ Durable lifecycle of processing one user turn.
 separate `TurnAttempt` records.
 **Invariant:** State changes follow the approved transition graph. Execution
 workflows commit lifecycle changes and their public execution events atomically.
+The implemented turn lifecycle includes `RECEIVED`, `RUNNING`, nonterminal
+`AWAITING_CONFIRMATION`, and terminal `COMPLETED`, `FAILED`, or `CANCELLED`;
+attempts mirror the pause and cancellation boundary.
 
 ### ExecutionEvent
 
 Immutable audit and replay record owned by one logical turn and optionally linked
 to the physical attempt that emitted it.
 
-**Implemented kinds:** `turn.started`, `response.delta`, `tool.started`,
-`tool.completed`, `tool.failed`, `turn.completed`, and `turn.failed`. Payloads
+**Implemented kinds:** `turn.started`, `response.delta`, `approval.required`,
+`approval.resolved`, `tool.started`, `tool.completed`, `tool.failed`,
+`turn.completed`, `turn.failed`, and terminal `turn.cancelled`. Payloads
 are recursively immutable and JSON-compatible. Tool events expose only stable
 invocation/tool identifiers and safe failure codes; no public event contains
 arguments, tool output, prompts, provider exceptions, or private reasoning.
@@ -198,10 +206,23 @@ Structured result of tool selection.
 
 ### ApprovalRequest
 
-Durable authorization/confirmation artifact.
+Durable fingerprint-bound human confirmation linked to one immutable
+`PolicyEvaluation` and exact `ToolInvocation`.
 
-**Contains:** requested action summary, argument fingerprint, required actor, status, expiry, decision actor/time.  
-**Invariant:** Approval applies only to the exact fingerprint and policy context; changed arguments invalidate it.
+**Contains:** team/requester identity, value-free safe action summary, internal
+`action-v1` fingerprint, `PENDING|APPROVED|REJECTED|EXPIRED|CONSUMED` status,
+expiry, decision actor/time, and consumption time.
+
+**Invariant:** Approval applies only to the exact requester, team, agent/tool
+versions, effect, environment, policy version, and canonical arguments. Public
+reads/events omit arguments and digest. Rejection/expiry never dispatches.
+
+### PolicyEvaluation
+
+Immutable audit fact recording trusted policy inputs, versioned decision and
+reason code, exact action fingerprint, and evaluation time. `ALLOW` is valid
+only for read-only effects; `REQUIRE_CONFIRMATION` only for mutating effects;
+denied external-side-effect and privileged proposals have no invocation.
 
 ### ToolInvocation
 
@@ -211,11 +232,13 @@ arguments, a stable platform-generated idempotency key, the authorized scope
 snapshot, lifecycle timestamps, and either a normalized result or safe failure
 code.
 
-The implemented lifecycle is `PENDING → RUNNING → SUCCEEDED|FAILED`. `PENDING`
-commits before adapter execution. The exact eligible tool is locked and
-revalidated when compare-and-setting `RUNNING`; that transition and
-`tool.started` are atomic. Adapter execution holds no database transaction, and
-the terminal state commits with `tool.completed` or `tool.failed`.
+The implemented lifecycle is
+`PENDING → RUNNING → SUCCEEDED|FAILED` for read-only calls and
+`PENDING → AWAITING_CONFIRMATION → RUNNING → SUCCEEDED|FAILED` for approved
+mutations. Rejection/expiry moves awaiting invocations to `CANCELLED` without
+starting. The exact eligible tool and fingerprint are locked/revalidated before
+approval consumption; consumption, `RUNNING`, resumed turn/attempt state, and
+`tool.started` are atomic. Adapter execution holds no database transaction.
 
 **Invariants:** Day 7 permits at most one invocation per attempt. Composite
 foreign keys enforce attempt/turn and tool-version/definition ownership. Stable
@@ -271,7 +294,7 @@ Release identifies a candidate configuration bundle. Deployment records stage, t
 - How long should approval requests and execution events be retained?
 
 
-## Implementation status after Day 7
+## Implementation status after Day 8
 
 Implemented durable entities:
 
@@ -288,6 +311,8 @@ Conversation
     ├── TurnAttempt
     ├── ExecutionEvent
     └── ToolInvocation
+        ├── PolicyEvaluation
+        └── ApprovalRequest
 
 Team
 └── ToolDefinition
@@ -354,11 +379,21 @@ Implemented invariants:
 - no transaction spans a model or tool adapter call;
 - final assistant output, successful lifecycle, and `turn.completed` are atomic,
   while committed partial progress is preserved before durable failure.
+- pure policy evaluation retains immutable audit for allow, deny, and
+  confirmation-required decisions;
+- mutating proposals persist exact invocation/evaluation/approval identity and
+  enter explicit awaiting lifecycles without dispatch;
+- approval decisions are actor-bound, idempotent, expiring, and selected through
+  PostgreSQL locks/compare-and-set updates;
+- final resume revalidates the exact action fingerprint and commits consumption,
+  running lifecycle, and `tool.started` before adapter execution;
+- rejection/expiry produces cancelled invocation/attempt/turn state and terminal
+  replayable events without adapter execution.
 
 Not implemented yet: transactional outbox dispatch, durable worker claiming and
 recovery, real model-provider execution, Redis event notifications, event
 retention, production chunk tuning, production token counting, semantic
 summarization, summary retention/chaining, semantic routing decisions,
-production authorization/health filtering, mutating dispatch and approval,
+production authorization/health filtering, elevated/external-effect approval,
 durable invocation recovery/retries, production adapters, evaluation entities,
 and release entities.

@@ -155,8 +155,11 @@ def test_execution_event_rejects_unsupported_values() -> None:
     [
         (ExecutionEventKind.TURN_STARTED, False),
         (ExecutionEventKind.RESPONSE_DELTA, False),
+        (ExecutionEventKind.APPROVAL_REQUIRED, False),
+        (ExecutionEventKind.APPROVAL_RESOLVED, False),
         (ExecutionEventKind.TURN_COMPLETED, True),
         (ExecutionEventKind.TURN_FAILED, True),
+        (ExecutionEventKind.TURN_CANCELLED, True),
     ],
 )
 def test_terminal_event_classification(

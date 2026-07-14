@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import cast
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ import pytest
 
 from switchboard.adapters.schema.jsonschema_validator import Draft202012JsonSchemaValidator
 from switchboard.application.errors import ToolDispatchError
+from switchboard.application.ports.agent_orchestrator import ToolCallAwaitingApproval
 from switchboard.application.ports.model_gateway import CallTool
 from switchboard.application.ports.tool_adapter import (
     ToolInvocationFailure,
@@ -21,15 +23,23 @@ from switchboard.application.services.tool_dispatch import (
     ToolDispatchContext,
 )
 from switchboard.domain.agents import AgentVersion
+from switchboard.domain.approvals import (
+    ApprovalRequest,
+    ApprovalStatus,
+    PolicyEvaluationRecord,
+)
 from switchboard.domain.context import ContextPolicy
 from switchboard.domain.conversations import Conversation, ConversationStatus
 from switchboard.domain.execution_events import ExecutionEventKind
 from switchboard.domain.identifiers import (
+    ActorId,
     AgentDefinitionId,
     AgentVersionId,
+    ApprovalRequestId,
     ConversationId,
     ExecutionEventId,
     MessageId,
+    PolicyEvaluationId,
     TeamId,
     ToolConformanceRunId,
     ToolDefinitionId,
@@ -38,6 +48,7 @@ from switchboard.domain.identifiers import (
     TurnAttemptId,
     TurnId,
 )
+from switchboard.domain.policy import PolicyDecision
 from switchboard.domain.tool_invocations import ToolInvocation, ToolInvocationStatus
 from switchboard.domain.tools import (
     JSON_SCHEMA_DRAFT_2020_12,
@@ -119,6 +130,8 @@ class FakeState:
         self.transaction_open = False
         self.commits = 0
         self.invocation: ToolInvocation | None = None
+        self.evaluations: list[PolicyEvaluationRecord] = []
+        self.approvals: list[ApprovalRequest] = []
         self.events: list[tuple[ExecutionEventKind, dict[str, object]]] = []
         self.disable_after_pending = False
         self.fail_event_append = False
@@ -138,9 +151,20 @@ class FakeToolInvocations:
         previous: ToolInvocation,
         updated: ToolInvocation,
     ) -> None:
-        current = self._unit_of_work.state.invocation
+        current = self._unit_of_work.pending_invocation or self._unit_of_work.state.invocation
         assert current == previous
         self._unit_of_work.updated_invocation = updated
+
+
+class FakeApprovals:
+    def __init__(self, unit_of_work: "FakeUnitOfWork") -> None:
+        self._unit_of_work = unit_of_work
+
+    async def add_evaluation(self, evaluation: PolicyEvaluationRecord) -> None:
+        self._unit_of_work.pending_evaluations.append(evaluation)
+
+    async def add_request(self, approval: ApprovalRequest) -> None:
+        self._unit_of_work.pending_approvals.append(approval)
 
 
 class FakeTurns:
@@ -162,7 +186,19 @@ class FakeTurns:
         kind = cast(ExecutionEventKind, values["kind"])
         payload = cast(dict[str, object], values["payload"])
         self._unit_of_work.pending_events.append((kind, payload))
-        return object()
+        return SimpleNamespace(
+            sequence=len(self._unit_of_work.state.events) + len(self._unit_of_work.pending_events)
+        )
+
+    async def update_turn_lifecycle(self, *, previous: Turn, updated: Turn) -> None:
+        assert self._unit_of_work.state.turn == previous
+        self._unit_of_work.updated_turn = updated
+
+    async def update_attempt_lifecycle(
+        self, *, previous: TurnAttempt, updated: TurnAttempt
+    ) -> None:
+        assert self._unit_of_work.state.attempt == previous
+        self._unit_of_work.updated_attempt = updated
 
 
 class FakeConversations:
@@ -191,6 +227,10 @@ class FakeTools:
             return None
         return self._state.version_state
 
+    async def get_version(self, tool_version_id: ToolVersionId) -> ToolVersion | None:
+        version = self._state.eligible.version
+        return version if tool_version_id == version.id else None
+
 
 class FakeUnitOfWork:
     def __init__(self, state: FakeState) -> None:
@@ -199,8 +239,13 @@ class FakeUnitOfWork:
         self.conversations = FakeConversations(state)
         self.tools = FakeTools(state)
         self.tool_invocations = FakeToolInvocations(self)
+        self.approvals = FakeApprovals(self)
         self.pending_invocation: ToolInvocation | None = None
         self.updated_invocation: ToolInvocation | None = None
+        self.updated_turn: Turn | None = None
+        self.updated_attempt: TurnAttempt | None = None
+        self.pending_evaluations: list[PolicyEvaluationRecord] = []
+        self.pending_approvals: list[ApprovalRequest] = []
         self.pending_events: list[tuple[ExecutionEventKind, dict[str, object]]] = []
 
     async def __aenter__(self) -> "FakeUnitOfWork":
@@ -216,6 +261,12 @@ class FakeUnitOfWork:
             self.state.invocation = self.pending_invocation
         if self.updated_invocation is not None:
             self.state.invocation = self.updated_invocation
+        if self.updated_turn is not None:
+            self.state.turn = self.updated_turn
+        if self.updated_attempt is not None:
+            self.state.attempt = self.updated_attempt
+        self.state.evaluations.extend(self.pending_evaluations)
+        self.state.approvals.extend(self.pending_approvals)
         self.state.events.extend(self.pending_events)
         self.state.commits += 1
         if (
@@ -352,6 +403,7 @@ def handler(
     return DurableToolCallHandler(
         context=ToolDispatchContext(
             team_id=state.conversation.team_id,
+            actor_id=ActorId(uuid4()),
             agent_version_id=state.turn.agent_version_id,
             turn_id=state.turn.id,
             attempt_id=state.attempt.id,
@@ -362,6 +414,8 @@ def handler(
         schema_validator=Draft202012JsonSchemaValidator(),
         clock=FixedClock(),
         invocation_ids=Generator[ToolInvocationId](ToolInvocationId),
+        policy_evaluation_ids=Generator[PolicyEvaluationId](PolicyEvaluationId),
+        approval_ids=Generator[ApprovalRequestId](ApprovalRequestId),
         event_ids=Generator[ExecutionEventId](ExecutionEventId),
     )
 
@@ -414,7 +468,6 @@ def configure_mutating_tool(state: FakeState) -> None:
     [
         (lambda state: None, (), {}, "tool_scope_denied"),
         (lambda state: None, ("work_items:read",), {"query": 7}, "tool_arguments_invalid"),
-        (configure_mutating_tool, ("work_items:read",), {}, "tool_effect_not_allowed"),
     ],
 )
 async def test_preflight_rejections_persist_nothing(
@@ -435,6 +488,63 @@ async def test_preflight_rejections_persist_nothing(
     assert raised.value.failure_code == failure_code
     assert state.invocation is None
     assert state.events == []
+    assert adapter.called == 0
+
+
+async def test_mutation_persists_a_safe_pause_without_dispatching() -> None:
+    state = FakeState()
+    configure_mutating_tool(state)
+    adapter = RecordingAdapter(state)
+
+    result = await handler(state, adapter).execute(action(state))
+
+    assert isinstance(result, ToolCallAwaitingApproval)
+    assert state.invocation is not None
+    assert state.invocation.status is ToolInvocationStatus.AWAITING_CONFIRMATION
+    assert state.turn.status is TurnStatus.AWAITING_CONFIRMATION
+    assert state.attempt.status is TurnAttemptStatus.AWAITING_CONFIRMATION
+    assert len(state.evaluations) == 1
+    assert state.evaluations[0].evaluation.decision is PolicyDecision.REQUIRE_CONFIRMATION
+    assert len(state.approvals) == 1
+    assert state.approvals[0].status is ApprovalStatus.PENDING
+    assert state.events[0][0] is ExecutionEventKind.APPROVAL_REQUIRED
+    assert "input-secret" not in repr(state.events)
+    assert adapter.called == 0
+    assert state.transaction_open is False
+
+
+@pytest.mark.parametrize(
+    "effect",
+    [ToolEffect.EXTERNAL_SIDE_EFFECT, ToolEffect.PRIVILEGED],
+)
+async def test_unsafe_effects_are_denied_with_audit_and_without_invocation(
+    effect: ToolEffect,
+) -> None:
+    state = FakeState()
+    manifest = replace(
+        state.eligible.version.manifest,
+        effect=effect,
+        idempotency=IdempotencyMode.REQUIRED,
+        reconciliation=ReconciliationMode.BY_IDEMPOTENCY_KEY,
+    )
+    state.eligible = EligibleTool(
+        state.eligible.definition,
+        replace(
+            state.eligible.version,
+            manifest=manifest,
+            content_hash=manifest.content_hash,
+        ),
+    )
+    adapter = RecordingAdapter(state)
+
+    with pytest.raises(ToolDispatchError) as raised:
+        await handler(state, adapter).execute(action(state))
+
+    assert raised.value.failure_code == "tool_policy_denied"
+    assert state.invocation is None
+    assert len(state.evaluations) == 1
+    assert state.evaluations[0].evaluation.decision is PolicyDecision.DENY
+    assert state.approvals == []
     assert adapter.called == 0
 
 

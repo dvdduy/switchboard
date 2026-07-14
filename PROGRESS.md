@@ -4,8 +4,8 @@
 
 - **Current phase:** Phase 1 — Conversation Platform Foundations
 - **Current milestone:** Milestone 1 — Conversation platform
-- **Completed through:** Day 7
-- **Next session:** Day 8 — Policy guardrails and durable approval
+- **Completed through:** Day 8
+- **Next session:** Day 9 — Durable multi-tool orchestration
 
 ## Progress log
 
@@ -19,6 +19,7 @@
 | 5 | Complete | A registry is a versioned safety contract; schema validation does not replace behavioral conformance | Team-owned tool definitions, immutable manifests, separate CAS lifecycle state, conformance history, immutable agent bindings, reference adapters, eligible query | Ruff, mypy, 216 tests, PostgreSQL migration/concurrency coverage, migration round-trip, container build | `d08a776` — `feat(tools): add versioned registry and conformance gates` | Explain immutable content versus mutable lifecycle, exact-version activation evidence, and safe idempotent adapter contracts | No runtime authorization/health filtering, public registry API, production HTTP/MCP/queue adapters, durable dispatch/recovery, or conformance retention/telemetry policy |
 | 6 | Complete | Public API contracts require durable acceptance, boundary idempotency, stable errors, and ownership-safe reads | Versioned create/continue commands, command receipts, ordered history, turn inspection, team-aware SSE, strict DTOs and OpenAPI | Ruff, mypy, 284 tests, PostgreSQL contract/concurrency coverage, migration round-trip, container build | Pending approval: `feat(api): add versioned conversation commands and history` | Explain why `202` means durable acceptance rather than execution, how database receipt uniqueness handles retries, and why external-client contracts do not expose persistence models | No production auth, rate limits/quotas, automatic outbox dispatch, durable worker claiming/recovery, or receipt/history retention policy |
 | 7 | Complete | Orchestration frameworks coordinate bounded steps but do not own durable platform truth | Provider-independent model/orchestration ports, isolated bounded LangGraph direct/one-tool loop, durable invocation lifecycle, locked read-only dispatch, explicit `RunTurn`, safe tool events | Ruff, mypy, 338 tests, PostgreSQL lifecycle/concurrency/E2E coverage, migration round-trip, container build | Pending approval: `feat(orchestration): add bounded LangGraph read-only agent loop` | Explain framework isolation, the `RUNNING` linearization point, stable logical invocation identity, short transactions, and safe partial failure | Explicit runner, fake provider, one read-only tool call, no semantic router, production identity/health, outbox recovery/retries, or retention policy |
+| 8 | Complete | Authorization, policy, confirmation, and execution are distinct durable facts; approval binds an exact action fingerprint | Pure policy matrix, immutable evaluation audit, expiring fingerprint-bound approval, awaiting/cancelled lifecycle, safe approval API, idempotent decisions, atomic resume | Ruff, mypy, 406 tests, PostgreSQL migration/concurrency/security/API/E2E coverage, migration round-trip, container build | Pending approval: `feat(policy): add durable confirmation gate for mutations` | Explain why the model proposes but cannot authorize, how PostgreSQL selects one decision/resume winner, and where the post-dispatch guarantee ends | Development identity/scopes, explicit runner, one tool call, in-memory mutation adapter, no outbox recovery, elevated approval, external-effect execution, or unknown-outcome reconciliation |
 
 ## Milestones
 
@@ -50,7 +51,7 @@
 - [x] Tool registry and conformance
 - [x] Shared conversation API
 - [x] Orchestration adapter
-- [ ] Policy and approval
+- [x] Policy and approval
 - [ ] Phase integration
 
 ### Milestone 2 — Routing and reliable execution
@@ -116,6 +117,15 @@
 - Never hold a transaction across context summarization, model calls, or tool
   calls, and exclude arguments, results, exceptions, prompts, and private
   reasoning from public tool events.
+- Treat model/tool text as non-authoritative data; evaluate a versioned policy
+  from trusted platform context and retain immutable decision audit.
+- Bind mutating approval to team, requester, pinned versions, effect,
+  environment, policy version, and canonical arguments; public summaries expose
+  field names but no values or digest.
+- Persist mutation proposal and pause atomically, then consume approval and
+  commit `RUNNING` plus `tool.started` before adapter dispatch.
+- Use actor-bound approval command receipts and approval-row locking/CAS as the
+  decision and duplicate-resume concurrency authority.
 
 ## Known debt
 
@@ -142,9 +152,13 @@
 - Tool management is application-only; there is no public registry API.
 - Only deterministic local reference adapters exist. HTTP, MCP, queue, and real
   external SaaS adapters are not implemented.
-- Explicit read-only tool dispatch is implemented. Durable invocation recovery,
-  retries, mutating dispatch/approval, and production unknown-outcome
-  reconciliation are not; the mutating reference adapter remains in-memory.
+- Read-only and confirmation-gated mutating dispatch are implemented. Durable
+  invocation recovery/retries and production unknown-outcome reconciliation are
+  not; the mutating reference adapter remains in-memory.
+- Development actor/team headers and granted scopes are trusted fixtures, not
+  production authentication, membership, delegation, or separation of duties.
+- Elevated/admin approval, external-side-effect execution, approval
+  notifications/batching/retention, and sensitivity-aware summaries are deferred.
 - The graph permits only zero or one tool call and has no semantic router,
   dynamic replanning, parallel branches, or durable framework checkpoints.
 - Conformance history has no retention policy or production telemetry/duration strategy.

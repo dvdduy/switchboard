@@ -40,13 +40,17 @@ from switchboard.domain.context import BuiltContext
 from switchboard.domain.conversations import MessageRole
 from switchboard.domain.execution_events import ExecutionEvent, ExecutionEventKind
 from switchboard.domain.identifiers import (
+    ActorId,
+    ApprovalRequestId,
     ExecutionEventId,
     MessageId,
+    PolicyEvaluationId,
     TeamId,
     ToolInvocationId,
     TurnAttemptId,
     TurnId,
 )
+from switchboard.domain.policy import PolicyEnvironment
 from switchboard.domain.tools import EligibleTool, ToolEffect
 from switchboard.domain.turns import Turn, TurnAttempt, TurnAttemptStatus, TurnStatus
 
@@ -67,9 +71,11 @@ class RunTurnCommand:
     """Trusted development execution authority for one physical attempt."""
 
     team_id: TeamId
+    actor_id: ActorId
     turn_id: TurnId
     attempt_id: TurnAttemptId
     granted_scopes: tuple[str, ...]
+    environment: PolicyEnvironment = PolicyEnvironment.DEVELOPMENT
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "granted_scopes", tuple(sorted(set(self.granted_scopes))))
@@ -81,11 +87,21 @@ class RunTurnResult:
 
     turn_id: TurnId
     attempt_id: TurnAttemptId
-    assistant_message_id: MessageId
+    assistant_message_id: MessageId | None
+    approval_id: ApprovalRequestId | None
+    invocation_id: ToolInvocationId | None
     tool_called: bool
     chunk_count: int
     first_event_sequence: int
     last_event_sequence: int
+
+    def __post_init__(self) -> None:
+        completed = self.assistant_message_id is not None
+        paused = self.approval_id is not None and self.invocation_id is not None
+        if completed == paused:
+            raise ValueError("run result requires exactly one completion or approval pause")
+        if paused and self.chunk_count != 0:
+            raise ValueError("paused run must not contain response chunks")
 
 
 class RunTurn:
@@ -101,6 +117,8 @@ class RunTurn:
         schema_validator: JsonSchemaValidator,
         clock: Clock,
         invocation_ids: IdGenerator[ToolInvocationId],
+        policy_evaluation_ids: IdGenerator[PolicyEvaluationId],
+        approval_ids: IdGenerator[ApprovalRequestId],
         event_ids: IdGenerator[ExecutionEventId],
         message_ids: IdGenerator[MessageId],
     ) -> None:
@@ -111,6 +129,8 @@ class RunTurn:
         self._schema_validator = schema_validator
         self._clock = clock
         self._invocation_ids = invocation_ids
+        self._policy_evaluation_ids = policy_evaluation_ids
+        self._approval_ids = approval_ids
         self._event_ids = event_ids
         self._message_ids = message_ids
 
@@ -130,22 +150,40 @@ class RunTurn:
             tool_handler = DurableToolCallHandler(
                 context=ToolDispatchContext(
                     team_id=command.team_id,
+                    actor_id=command.actor_id,
                     agent_version_id=built_context.agent_version_id,
                     turn_id=command.turn_id,
                     attempt_id=command.attempt_id,
                     granted_scopes=command.granted_scopes,
+                    environment=command.environment,
                 ),
                 unit_of_work_factory=self._unit_of_work_factory,
                 adapter_resolver=self._adapter_resolver,
                 schema_validator=self._schema_validator,
                 clock=self._clock,
                 invocation_ids=self._invocation_ids,
+                policy_evaluation_ids=self._policy_evaluation_ids,
+                approval_ids=self._approval_ids,
                 event_ids=self._event_ids,
             )
             orchestration = await self._orchestrator.run(
                 OrchestrationRequest(initial_request),
                 tool_handler=tool_handler,
             )
+            if orchestration.approval_required is not None:
+                return RunTurnResult(
+                    turn_id=command.turn_id,
+                    attempt_id=command.attempt_id,
+                    assistant_message_id=None,
+                    approval_id=orchestration.approval_required.approval_id,
+                    invocation_id=orchestration.approval_required.invocation_id,
+                    tool_called=True,
+                    chunk_count=0,
+                    first_event_sequence=started_event.sequence,
+                    last_event_sequence=orchestration.approval_required.event_sequence,
+                )
+            if orchestration.response_text is None:
+                raise RuntimeError("completed orchestration requires response text")
             chunks = chunk_response_text(orchestration.response_text)
             for chunk in chunks:
                 await self._append_delta(command=command, chunk=chunk)
@@ -161,6 +199,8 @@ class RunTurn:
                 turn_id=command.turn_id,
                 attempt_id=command.attempt_id,
                 assistant_message_id=assistant_message_id,
+                approval_id=None,
+                invocation_id=None,
                 tool_called=orchestration.tool_called,
                 chunk_count=len(chunks),
                 first_event_sequence=started_event.sequence,
@@ -224,7 +264,7 @@ class RunTurn:
         return tuple(
             tool
             for tool in eligible
-            if tool.version.manifest.effect is ToolEffect.READ_ONLY
+            if tool.version.manifest.effect in {ToolEffect.READ_ONLY, ToolEffect.MUTATING}
             and set(tool.version.manifest.required_scopes).issubset(granted)
         )[:MAX_MODEL_TOOL_CANDIDATES]
 

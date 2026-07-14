@@ -35,15 +35,19 @@ from switchboard.application.ports.tool_adapter import (
 from switchboard.application.services.tool_manifest_validation import ToolManifestValidator
 from switchboard.application.use_cases.build_turn_context import BuildTurnContext
 from switchboard.application.use_cases.run_turn import RunTurn, RunTurnCommand
+from switchboard.domain.approvals import ApprovalStatus
 from switchboard.domain.context import ContextItemCandidate
 from switchboard.domain.errors import InvalidStateTransition
 from switchboard.domain.execution_events import ExecutionEventKind
 from switchboard.domain.identifiers import (
+    ActorId,
     AgentToolBindingId,
     AgentVersionId,
+    ApprovalRequestId,
     ConversationSummaryId,
     ExecutionEventId,
     MessageId,
+    PolicyEvaluationId,
     TeamId,
     ToolConformanceCaseResultId,
     ToolConformanceRunId,
@@ -52,6 +56,7 @@ from switchboard.domain.identifiers import (
     ToolVersionId,
     TurnId,
 )
+from switchboard.domain.policy import PolicyDecision
 from switchboard.domain.tool_invocations import ToolInvocationStatus
 from switchboard.domain.tools import (
     AgentToolBinding,
@@ -71,6 +76,7 @@ from tests.integration.test_conversation_api import (
 )
 
 NOW = datetime(2026, 7, 15, 0, 0, tzinfo=UTC)
+ACTOR_ID = ActorId(uuid4())
 
 
 class CharacterTokenCounter:
@@ -121,6 +127,8 @@ def run_turn(
         schema_validator=Draft202012JsonSchemaValidator(),
         clock=FixedClock(),
         invocation_ids=Generator(lambda: ToolInvocationId(uuid4())),
+        policy_evaluation_ids=Generator(lambda: PolicyEvaluationId(uuid4())),
+        approval_ids=Generator(lambda: ApprovalRequestId(uuid4())),
         event_ids=Generator(lambda: ExecutionEventId(uuid4())),
         message_ids=Generator(
             (lambda: MessageId(uuid4())) if message_id_factory is None else message_id_factory
@@ -223,6 +231,7 @@ async def test_direct_run_persists_response_and_atomic_terminal_success(
     ).execute(
         RunTurnCommand(
             team_id=conversation.team_id,
+            actor_id=ACTOR_ID,
             turn_id=turn.id,
             attempt_id=attempt.id,
             granted_scopes=(),
@@ -289,6 +298,7 @@ async def test_tool_run_orders_tool_progress_before_response_and_completion(
     ).execute(
         RunTurnCommand(
             team_id=conversation.team_id,
+            actor_id=ACTOR_ID,
             turn_id=turn.id,
             attempt_id=attempt.id,
             granted_scopes=("work_items:read",),
@@ -337,6 +347,7 @@ async def test_post_start_orchestration_failure_closes_turn_with_safe_event(
         await use_case.execute(
             RunTurnCommand(
                 team_id=conversation.team_id,
+                actor_id=ACTOR_ID,
                 turn_id=turn.id,
                 attempt_id=attempt.id,
                 granted_scopes=(),
@@ -381,6 +392,7 @@ async def test_completion_write_failure_rolls_back_success_before_durable_failur
         await use_case.execute(
             RunTurnCommand(
                 team_id=conversation.team_id,
+                actor_id=ACTOR_ID,
                 turn_id=turn.id,
                 attempt_id=attempt.id,
                 granted_scopes=(),
@@ -450,6 +462,7 @@ async def assert_dispatch_rejected(
         ).execute(
             RunTurnCommand(
                 team_id=conversation.team_id,
+                actor_id=ACTOR_ID,
                 turn_id=turn.id,
                 attempt_id=attempt.id,
                 granted_scopes=granted_scopes,
@@ -471,7 +484,7 @@ async def assert_dispatch_rejected(
     ]
 
 
-async def test_unbound_disabled_mutating_unscoped_and_invalid_calls_never_dispatch(
+async def test_unbound_disabled_unscoped_and_invalid_calls_never_dispatch(
     unit_of_work_factory: SqlAlchemyUnitOfWorkFactory,
 ) -> None:
     await assert_dispatch_rejected(
@@ -494,15 +507,6 @@ async def test_unbound_disabled_mutating_unscoped_and_invalid_calls_never_dispat
     )
     await assert_dispatch_rejected(
         unit_of_work_factory,
-        candidate=update_due_date_manifest(),
-        bind=True,
-        disable=False,
-        granted_scopes=("work_items:write",),
-        arguments={"work_item_id": "WI-1", "due_date": "2026-07-20"},
-        expected_code="tool_effect_not_allowed",
-    )
-    await assert_dispatch_rejected(
-        unit_of_work_factory,
         candidate=search_work_items_manifest(),
         bind=True,
         disable=False,
@@ -519,6 +523,83 @@ async def test_unbound_disabled_mutating_unscoped_and_invalid_calls_never_dispat
         arguments={"query": 7},
         expected_code="tool_arguments_invalid",
     )
+
+
+async def test_mutating_call_durably_pauses_before_dispatch(
+    unit_of_work_factory: SqlAlchemyUnitOfWorkFactory,
+) -> None:
+    turn, attempt = await seed_turn(unit_of_work_factory, now=NOW)
+    async with unit_of_work_factory() as unit_of_work:
+        conversation = await unit_of_work.conversations.get(turn.conversation_id)
+    assert conversation is not None
+    version = await activate_tool(
+        unit_of_work_factory,
+        turn_agent_version_id=turn.agent_version_id,
+        team_id=conversation.team_id,
+        candidate=update_due_date_manifest(),
+    )
+    gateway = ScriptedModelGateway(
+        (
+            CallTool(
+                version.id,
+                {"work_item_id": "WI-1", "due_date": "2026-07-20"},
+            ),
+        )
+    )
+
+    result = await run_turn(
+        unit_of_work_factory,
+        gateway=gateway,
+        resolver=StaticToolAdapterResolver({}),
+    ).execute(
+        RunTurnCommand(
+            team_id=conversation.team_id,
+            actor_id=ACTOR_ID,
+            turn_id=turn.id,
+            attempt_id=attempt.id,
+            granted_scopes=version.manifest.required_scopes,
+        )
+    )
+
+    async with unit_of_work_factory() as unit_of_work:
+        stored_turn = await unit_of_work.turns.get(turn.id)
+        stored_attempt = await unit_of_work.turns.get_attempt(attempt.id)
+        invocations = await unit_of_work.tool_invocations.list_for_turn(turn.id)
+        events = await unit_of_work.turns.list_events(
+            turn_id=turn.id,
+            after_sequence=0,
+            limit=10,
+        )
+        messages = await unit_of_work.conversations.list_messages(turn.conversation_id)
+        evaluations = await unit_of_work.approvals.list_evaluations_for_invocation(
+            invocations[0].id
+        )
+        approvals = await unit_of_work.approvals.list_requests_for_invocation(invocations[0].id)
+
+    assert result.assistant_message_id is None
+    assert result.approval_id == approvals[0].id
+    assert result.invocation_id == invocations[0].id
+    assert result.chunk_count == 0
+    assert len(gateway.requests) == 1
+    assert stored_turn is not None
+    assert stored_turn.status is TurnStatus.AWAITING_CONFIRMATION
+    assert stored_attempt is not None
+    assert stored_attempt.status is TurnAttemptStatus.AWAITING_CONFIRMATION
+    assert len(invocations) == 1
+    assert invocations[0].status is ToolInvocationStatus.AWAITING_CONFIRMATION
+    assert len(evaluations) == 1
+    assert evaluations[0].evaluation.decision is PolicyDecision.REQUIRE_CONFIRMATION
+    assert evaluations[0].requester_actor_id == ACTOR_ID
+    assert len(approvals) == 1
+    assert approvals[0].status is ApprovalStatus.PENDING
+    assert [event.kind for event in events] == [
+        ExecutionEventKind.TURN_STARTED,
+        ExecutionEventKind.APPROVAL_REQUIRED,
+    ]
+    assert len(messages) == 1
+    public_event = repr(events[-1].payload)
+    assert "WI-1" not in public_event
+    assert "2026-07-20" not in public_event
 
 
 @pytest.mark.parametrize(
@@ -556,6 +637,7 @@ async def test_tool_failure_preserves_safe_partial_progress_and_fails_turn(
         ).execute(
             RunTurnCommand(
                 team_id=conversation.team_id,
+                actor_id=ACTOR_ID,
                 turn_id=turn.id,
                 attempt_id=attempt.id,
                 granted_scopes=("work_items:read",),
@@ -603,6 +685,7 @@ async def test_only_one_competing_run_turn_can_start_and_complete(
     def command() -> RunTurnCommand:
         return RunTurnCommand(
             team_id=conversation.team_id,
+            actor_id=ACTOR_ID,
             turn_id=turn.id,
             attempt_id=attempt.id,
             granted_scopes=(),
@@ -681,6 +764,7 @@ async def test_api_created_tool_turn_replays_sse_and_exposes_final_history(
         ).execute(
             RunTurnCommand(
                 team_id=team_id,
+                actor_id=ACTOR_ID,
                 turn_id=turn_id,
                 attempt_id=attempts[0].id,
                 granted_scopes=("work_items:read",),

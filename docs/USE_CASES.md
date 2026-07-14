@@ -40,17 +40,17 @@ orchestration or routing code. Semantic routing itself is not implemented yet.
 **Primary actor:** End user  
 **Example:** “Which Project Alpha tasks are overdue?”
 
-**Implemented Day 7 subset:** The client creates a conversation or continuation
+**Implemented through Day 8:** The client creates a conversation or continuation
 through `/api/v1`. Switchboard atomically persists the user message, received
 turn, pending attempt, and idempotency receipt, then returns `202` and a
 reconnectable event URL. A trusted explicit runner builds the pinned bounded
-context and gives active, bound, scoped, read-only descriptors to a deterministic
+context and gives active, bound, scoped descriptors to a deterministic
 structured model. It can dispatch exact `search_work_items`, normalize the
 result as untrusted data, generate a final response, and expose committed safe
 tool/output events through history and SSE.
 
 Automatic outbox dispatch, semantic routing/confidence, production identity and
-health, policy traces, and real model generation in the target flow below are
+health and real model generation in the target flow below are
 not implemented. The numbered flow remains the target architecture rather than
 a claim that every step is complete.
 
@@ -85,13 +85,23 @@ a claim that every step is complete.
 
 **Example:** “Move TASK-123’s due date to Friday.”
 
+**Implemented Day 8 subset:** A deterministic structured model may propose one
+active, bound, scoped `MUTATING` call. Switchboard atomically persists the exact
+invocation, immutable policy evaluation, expiring fingerprint-bound approval,
+awaiting execution state, and safe `approval.required` event. The versioned API
+provides a safe read and actor-bound idempotent decision command. Approval
+consumption and `tool.started` commit before the local adapter call; rejection
+or expiry emits `approval.resolved` and terminal `turn.cancelled` without
+dispatch.
+
 1. Router selects `update_due_date`.
 2. Policy evaluates user, team, scopes, tool effect, environment, and normalized arguments.
 3. Policy returns `REQUIRE_CONFIRMATION`.
 4. Switchboard creates a durable approval request containing a safe action summary and argument fingerprint.
 5. Client presents the request.
 6. User approves.
-7. Worker verifies that approval is unexpired and still matches the intended arguments.
+7. Switchboard verifies that approval is unexpired and still matches ownership,
+   binding, lifecycle, scopes, versions, policy, and intended arguments.
 8. Executor invokes the pinned tool version with a stable idempotency key.
 9. Result, audit event, and response are persisted.
 
@@ -100,6 +110,10 @@ a claim that every step is complete.
 - Rejection or expiry: turn becomes cancelled or responds without executing.
 - Arguments change after approval: old approval is invalid; a new approval is required.
 - Missing scope: policy denies before confirmation.
+
+**Guarantee boundary:** tested concurrent flows cross the logical dispatch
+transition once. A crash after `RUNNING` commits can still leave an ambiguous
+external outcome; automatic recovery and reconciliation are deferred.
 
 ---
 

@@ -14,7 +14,10 @@ from switchboard.application.errors import (
     ModelGatewayUnavailableError,
     OrchestrationStepLimitError,
 )
-from switchboard.application.ports.agent_orchestrator import OrchestrationRequest
+from switchboard.application.ports.agent_orchestrator import (
+    OrchestrationRequest,
+    ToolCallAwaitingApproval,
+)
 from switchboard.application.ports.model_gateway import (
     CallTool,
     ModelContextItem,
@@ -26,7 +29,12 @@ from switchboard.application.ports.model_gateway import (
 )
 from switchboard.domain.context import ContextItemKind
 from switchboard.domain.conversations import MessageRole
-from switchboard.domain.identifiers import ToolDefinitionId, ToolVersionId
+from switchboard.domain.identifiers import (
+    ApprovalRequestId,
+    ToolDefinitionId,
+    ToolInvocationId,
+    ToolVersionId,
+)
 
 
 class RecordingToolHandler:
@@ -43,6 +51,20 @@ class MismatchedToolHandler:
     async def execute(self, action: CallTool) -> ModelToolResult:
         del action
         return ModelToolResult(tool_version_id=ToolVersionId(uuid4()), output={})
+
+
+class ApprovalToolHandler:
+    def __init__(self) -> None:
+        self.actions: list[CallTool] = []
+        self.result = ToolCallAwaitingApproval(
+            approval_id=ApprovalRequestId(uuid4()),
+            invocation_id=ToolInvocationId(uuid4()),
+            event_sequence=2,
+        )
+
+    async def execute(self, action: CallTool) -> ToolCallAwaitingApproval:
+        self.actions.append(action)
+        return self.result
 
 
 def descriptor() -> ModelToolDescriptor:
@@ -120,6 +142,24 @@ async def test_one_tool_call_builds_a_normalized_final_model_request() -> None:
         tool_version_id=tool.tool_version_id,
         output={"items": [{"id": "WI-1"}]},
     )
+
+
+async def test_approval_pause_ends_graph_without_final_model_call() -> None:
+    tool = descriptor()
+    call = CallTool(tool.tool_version_id, {"work_item_id": "WI-1"})
+    gateway = ScriptedModelGateway((call, Respond("must not be used")))
+    handler = ApprovalToolHandler()
+
+    result = await LangGraphAgentOrchestrator(model_gateway=gateway).run(
+        OrchestrationRequest(initial_request(tool), max_steps=3),
+        tool_handler=handler,
+    )
+
+    assert result.response_text is None
+    assert result.tool_called is True
+    assert result.approval_required == handler.result
+    assert handler.actions == [call]
+    assert gateway.requests == [initial_request(tool)]
 
 
 async def test_second_tool_request_is_rejected_without_a_second_dispatch() -> None:

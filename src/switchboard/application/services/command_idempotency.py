@@ -6,9 +6,16 @@ import json
 from switchboard.application.errors import InvalidIdempotencyKeyError
 from switchboard.domain.command_receipts import (
     CREATE_CONVERSATION_SCOPE,
+    ApprovalDecision,
     CommandOperation,
 )
-from switchboard.domain.identifiers import AgentVersionId, ConversationId, TeamId
+from switchboard.domain.identifiers import (
+    ActorId,
+    AgentVersionId,
+    ApprovalRequestId,
+    ConversationId,
+    TeamId,
+)
 
 FINGERPRINT_VERSION = 1
 MAX_IDEMPOTENCY_KEY_LENGTH = 128
@@ -60,6 +67,27 @@ def fingerprint_continue_conversation(
             "operation": CommandOperation.CONTINUE_CONVERSATION.value,
             "team_id": str(team_id),
             "user_message": user_message,
+        }
+    )
+
+
+def fingerprint_approval_decision(
+    *,
+    team_id: TeamId,
+    approval_id: ApprovalRequestId,
+    actor_id: ActorId,
+    decision: ApprovalDecision,
+) -> str:
+    """Fingerprint one exact actor-bound approval decision."""
+
+    return _fingerprint(
+        {
+            "actor_id": str(actor_id),
+            "approval_id": str(approval_id),
+            "command_scope": str(approval_id),
+            "decision": decision.value,
+            "operation": CommandOperation.DECIDE_APPROVAL.value,
+            "team_id": str(team_id),
         }
     )
 

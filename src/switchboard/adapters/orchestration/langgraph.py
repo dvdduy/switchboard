@@ -16,6 +16,7 @@ from switchboard.application.ports.agent_orchestrator import (
     MAX_ORCHESTRATION_STEPS,
     OrchestrationRequest,
     OrchestrationResult,
+    ToolCallAwaitingApproval,
     ToolCallHandler,
 )
 from switchboard.application.ports.model_gateway import (
@@ -26,7 +27,12 @@ from switchboard.application.ports.model_gateway import (
     ModelToolResult,
     Respond,
 )
-from switchboard.domain.identifiers import ToolVersionId
+from switchboard.domain.errors import DomainValidationError
+from switchboard.domain.identifiers import (
+    ApprovalRequestId,
+    ToolInvocationId,
+    ToolVersionId,
+)
 from switchboard.domain.json_values import canonical_json
 
 _GRAPH_RECURSION_LIMIT = MAX_ORCHESTRATION_STEPS + 2
@@ -42,6 +48,10 @@ class OrchestrationGraphState(TypedDict, total=False):
     tool_version_id: str
     tool_arguments: dict[str, object]
     tool_output: dict[str, object]
+    post_tool_route: Literal["result", "approval"]
+    approval_id: str
+    invocation_id: str
+    approval_event_sequence: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +78,14 @@ class LangGraphAgentOrchestrator:
                 "tool": "dispatch_tool",
             },
         )
-        builder.add_edge("dispatch_tool", "request_final_response")
+        builder.add_conditional_edges(
+            "dispatch_tool",
+            self._route_after_tool,
+            {
+                "result": "request_final_response",
+                "approval": END,
+            },
+        )
         builder.add_edge("request_final_response", END)
         self._graph = builder.compile()
 
@@ -83,12 +100,15 @@ class LangGraphAgentOrchestrator:
             config={"recursion_limit": _GRAPH_RECURSION_LIMIT},
             context=_RunContext(request=request, tool_handler=tool_handler),
         )
+        state = cast(OrchestrationGraphState, state)
         response_text = state.get("response_text")
-        if not isinstance(response_text, str):
+        approval_required = _approval_outcome(state)
+        if response_text is not None and not isinstance(response_text, str):
             raise MalformedModelOutputError()
         return OrchestrationResult(
             response_text=response_text,
             tool_called=state.get("tool_called") is True,
+            approval_required=approval_required,
         )
 
     async def _request_initial_action(
@@ -141,12 +161,30 @@ class LangGraphAgentOrchestrator:
         result = await runtime.context.tool_handler.execute(
             CallTool(tool_version_id=version_id, arguments=tool_arguments)
         )
+        if isinstance(result, ToolCallAwaitingApproval):
+            return OrchestrationGraphState(
+                steps=steps,
+                post_tool_route="approval",
+                approval_id=str(result.approval_id),
+                invocation_id=str(result.invocation_id),
+                approval_event_sequence=result.event_sequence,
+            )
         if result.tool_version_id != version_id:
             raise MalformedModelOutputError()
         return OrchestrationGraphState(
             steps=steps,
+            post_tool_route="result",
             tool_output=_mutable_json_object(result.output),
         )
+
+    @staticmethod
+    def _route_after_tool(
+        state: OrchestrationGraphState,
+    ) -> Literal["result", "approval"]:
+        route = state.get("post_tool_route")
+        if route not in {"result", "approval"}:
+            raise MalformedModelOutputError()
+        return route
 
     async def _request_final_response(
         self,
@@ -194,3 +232,27 @@ def _mutable_json_object(value: object) -> dict[str, object]:
     if not isinstance(parsed, dict):
         raise MalformedModelOutputError()
     return cast(dict[str, object], parsed)
+
+
+def _approval_outcome(
+    state: OrchestrationGraphState,
+) -> ToolCallAwaitingApproval | None:
+    approval_id = state.get("approval_id")
+    invocation_id = state.get("invocation_id")
+    event_sequence = state.get("approval_event_sequence")
+    if approval_id is None and invocation_id is None and event_sequence is None:
+        return None
+    if (
+        not isinstance(approval_id, str)
+        or not isinstance(invocation_id, str)
+        or not isinstance(event_sequence, int)
+    ):
+        raise MalformedModelOutputError()
+    try:
+        return ToolCallAwaitingApproval(
+            approval_id=ApprovalRequestId(UUID(approval_id)),
+            invocation_id=ToolInvocationId(UUID(invocation_id)),
+            event_sequence=event_sequence,
+        )
+    except (ValueError, DomainValidationError):
+        raise MalformedModelOutputError() from None

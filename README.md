@@ -15,15 +15,17 @@ The current implementation provides:
 - deterministic read-only and idempotent mutating reference adapters;
 - a framework-isolated bounded LangGraph loop with deterministic model actions;
 - durable explicit turn execution through either a direct response or one
-  active, bound, scoped, read-only tool invocation;
+  active, bound, scoped tool invocation;
+- a pure policy matrix with durable audit, fingerprint-bound mutating approval,
+  expiring confirmation, safe resume, and cancellation;
 - a versioned conversation API with durable idempotent commands, ordered
-  history reads, turn inspection, and team-aware reconnectable SSE.
+  history reads, turn inspection, safe approval reads/decisions, and team-aware
+  reconnectable SSE.
 
 Planned capabilities include:
 
 - semantic tool routing;
 - automatic durable worker dispatch and recovery;
-- policy enforcement;
 - evaluation and regression detection;
 - observability and rollout safety.
 
@@ -73,6 +75,9 @@ The public conversation API uses an explicit `X-Team-ID` UUID as development
 identity. This is not production authentication. Create and continue commands
 also require an opaque `Idempotency-Key` of 1–128 visible ASCII characters.
 The key is hashed before persistence.
+
+Approval decisions additionally require `X-Actor-ID`. Both identity headers are
+trusted development context, not authentication or membership proof.
 
 Create a conversation using an agent version already registered through the
 application workflow:
@@ -132,6 +137,24 @@ Frames use the durable turn-local sequence as `id`, a stable platform event name
 as `event`, and a compact JSON payload as `data`. Disconnecting the observer does
 not cancel or mutate the turn.
 
+Read and decide an approval:
+
+```bash
+curl -H "X-Team-ID: <team-id>" \
+  http://127.0.0.1:8000/api/v1/approvals/<approval-id>
+
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -H "X-Team-ID: <team-id>" \
+  -H "X-Actor-ID: <actor-id>" \
+  -H "Idempotency-Key: approve-001" \
+  -d '{"decision":"approve"}' \
+  http://127.0.0.1:8000/api/v1/approvals/<approval-id>/decisions
+```
+
+Approval responses expose stable identities, lifecycle timestamps, fingerprint
+version, and argument field names only—not argument values or the digest.
+
 ## Context management
 
 Each immutable agent version declares its model-window budget, reserved output,
@@ -143,7 +166,7 @@ uses a durable provenance-bearing summary for an omitted older prefix.
 The counter and summarizer boundaries are provider-independent. The included
 summarizer is deterministic and extractive for development and tests; it is not
 a production model tokenizer or semantic-memory system. Context reconstruction
-is consumed by the explicit Day 7 run-turn workflow. It is not exposed as a
+is consumed by the explicit Day 8 run-turn workflow. It is not exposed as a
 public endpoint, and the model gateway remains a deterministic structured fake
 rather than a real provider.
 
@@ -156,14 +179,14 @@ tool bindings. JSON Schema Draft 2020-12 validation is bounded, remote reference
 are rejected, and diagnostics do not copy rejected values.
 
 The included `search_work_items` and `update_due_date` adapters are deterministic
-local examples. Day 7 can durably invoke `search_work_items`; mutating,
-external-side-effect, and privileged tools remain blocked. The mutating example
-demonstrates stable idempotency keys and reconciliation only through conformance,
-and its state is intentionally in-memory. No public tool-management or execution
-endpoint, semantic router, production authentication/authorization, live-health
-filter, or production adapter exists yet.
+local examples. Read-only calls dispatch directly after policy evaluation.
+Mutating calls pause durably and dispatch only after matching unexpired approval.
+External-side-effect and privileged tools remain denied. Adapter state is
+intentionally in-memory. No public tool-management endpoint, semantic router,
+production authentication/authorization, live-health filter, or production
+adapter exists yet.
 
-## Explicit Day 7 execution
+## Explicit Day 8 execution and approval
 
 The conversation API still returns `202` after durable acceptance and never
 starts execution. The application-level `RunTurn` workflow must be invoked by a
@@ -173,6 +196,9 @@ team, and granted scopes. It builds the pinned bounded context and runs either:
 ```text
 Respond -> response.delta* -> turn.completed
 CallTool -> tool.started -> tool.completed -> response.delta* -> turn.completed
+Mutating CallTool -> approval.required -> durable pause
+Approve -> approval.resolved -> tool.started -> tool.completed -> turn.completed
+Reject/expire -> approval.resolved -> turn.cancelled
 ```
 
 Tool failures emit `tool.failed` with a safe code before the turn closes with
@@ -197,5 +223,7 @@ tuning, production tokenizers, semantic summarization, or summary chaining.
 Tool-registry debt also includes production HTTP/MCP/queue adapters, durable
 dispatch recovery, production authorization and health filtering, and
 conformance retention/telemetry policy.
+Ordinary confirmation does not enable privileged or external-side-effect tools,
+and approval does not make ambiguous external outcomes or blind retries safe.
 The manifest shape contains no credential configuration, but semantic secret
 scanning of arbitrary description or schema text is also deferred.

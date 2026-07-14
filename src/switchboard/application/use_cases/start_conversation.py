@@ -191,6 +191,20 @@ class StartConversation:
 
 
 def _result_from_receipt(receipt: CommandReceipt) -> StartConversationResult:
+    if any(
+        value is None
+        for value in (
+            receipt.conversation_id,
+            receipt.message_id,
+            receipt.turn_id,
+            receipt.attempt_id,
+        )
+    ):
+        raise RuntimeError("conversation receipt is missing result identities")
+    assert receipt.conversation_id is not None
+    assert receipt.message_id is not None
+    assert receipt.turn_id is not None
+    assert receipt.attempt_id is not None
     return StartConversationResult(
         conversation_id=receipt.conversation_id,
         message_id=receipt.message_id,

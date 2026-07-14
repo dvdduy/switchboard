@@ -5,11 +5,19 @@ import pytest
 
 from switchboard.application.errors import InvalidIdempotencyKeyError
 from switchboard.application.services.command_idempotency import (
+    fingerprint_approval_decision,
     fingerprint_continue_conversation,
     fingerprint_create_conversation,
     hash_idempotency_key,
 )
-from switchboard.domain.identifiers import AgentVersionId, ConversationId, TeamId
+from switchboard.domain.command_receipts import ApprovalDecision
+from switchboard.domain.identifiers import (
+    ActorId,
+    AgentVersionId,
+    ApprovalRequestId,
+    ConversationId,
+    TeamId,
+)
 
 
 def test_key_hash_is_exact_deterministic_and_does_not_retain_plaintext() -> None:
@@ -70,4 +78,29 @@ def test_continue_fingerprint_is_scoped_to_team_and_conversation() -> None:
         team_id=team_id,
         conversation_id=ConversationId(uuid4()),
         user_message="Continue",
+    )
+
+
+def test_approval_fingerprint_changes_with_actor_or_decision() -> None:
+    team_id = TeamId(uuid4())
+    approval_id = ApprovalRequestId(uuid4())
+    actor_id = ActorId(uuid4())
+    baseline = fingerprint_approval_decision(
+        team_id=team_id,
+        approval_id=approval_id,
+        actor_id=actor_id,
+        decision=ApprovalDecision.APPROVE,
+    )
+
+    assert baseline != fingerprint_approval_decision(
+        team_id=team_id,
+        approval_id=approval_id,
+        actor_id=ActorId(uuid4()),
+        decision=ApprovalDecision.APPROVE,
+    )
+    assert baseline != fingerprint_approval_decision(
+        team_id=team_id,
+        approval_id=approval_id,
+        actor_id=actor_id,
+        decision=ApprovalDecision.REJECT,
     )

@@ -7,6 +7,8 @@ from enum import StrEnum
 from switchboard.domain.common import normalize_utc
 from switchboard.domain.errors import DomainValidationError
 from switchboard.domain.identifiers import (
+    ActorId,
+    ApprovalRequestId,
     CommandReceiptId,
     ConversationId,
     MessageId,
@@ -23,6 +25,14 @@ class CommandOperation(StrEnum):
 
     CREATE_CONVERSATION = "create_conversation"
     CONTINUE_CONVERSATION = "continue_conversation"
+    DECIDE_APPROVAL = "decide_approval"
+
+
+class ApprovalDecision(StrEnum):
+    """Public human decisions accepted by the approval command."""
+
+    APPROVE = "approve"
+    REJECT = "reject"
 
 
 def _require_sha256(value: str, *, field_name: str) -> None:
@@ -40,21 +50,46 @@ class CommandReceipt:
     command_scope: str
     idempotency_key_hash: str
     request_fingerprint: str
-    conversation_id: ConversationId
-    message_id: MessageId
-    turn_id: TurnId
-    attempt_id: TurnAttemptId
     created_at: datetime
+    conversation_id: ConversationId | None = None
+    message_id: MessageId | None = None
+    turn_id: TurnId | None = None
+    attempt_id: TurnAttemptId | None = None
+    approval_id: ApprovalRequestId | None = None
+    actor_id: ActorId | None = None
+    approval_decision: ApprovalDecision | None = None
 
     def __post_init__(self) -> None:
-        expected_scope = (
-            CREATE_CONVERSATION_SCOPE
-            if self.operation is CommandOperation.CREATE_CONVERSATION
-            else str(self.conversation_id)
-        )
+        if self.operation is CommandOperation.CREATE_CONVERSATION:
+            expected_scope = CREATE_CONVERSATION_SCOPE
+        elif self.operation is CommandOperation.CONTINUE_CONVERSATION:
+            expected_scope = str(self.conversation_id)
+        else:
+            expected_scope = str(self.approval_id)
         if self.command_scope != expected_scope:
             raise DomainValidationError(
                 f"command_scope must be {expected_scope!r} for {self.operation.value}"
+            )
+
+        conversation_values = (
+            self.conversation_id,
+            self.message_id,
+            self.turn_id,
+            self.attempt_id,
+        )
+        approval_values = (self.approval_id, self.actor_id, self.approval_decision)
+        if self.operation is CommandOperation.DECIDE_APPROVAL:
+            if any(value is not None for value in conversation_values) or any(
+                value is None for value in approval_values
+            ):
+                raise DomainValidationError(
+                    "approval receipt requires only approval decision result fields"
+                )
+        elif any(value is None for value in conversation_values) or any(
+            value is not None for value in approval_values
+        ):
+            raise DomainValidationError(
+                "conversation receipt requires only conversation result fields"
             )
 
         _require_sha256(self.idempotency_key_hash, field_name="idempotency_key_hash")

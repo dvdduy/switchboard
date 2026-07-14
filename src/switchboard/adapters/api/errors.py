@@ -17,6 +17,11 @@ from switchboard.application.errors import (
     AgentTeamMismatchError,
     AgentVersionNotFoundError,
     ApplicationError,
+    ApprovalDecisionConflictError,
+    ApprovalLifecycleConflictError,
+    ApprovalNotFoundError,
+    ApprovalRevalidationError,
+    ApprovalTeamMismatchError,
     ConversationClosedError,
     ConversationNotFoundError,
     ConversationTeamMismatchError,
@@ -100,9 +105,24 @@ async def _handle_application_error(_: Request, error: Exception) -> JSONRespons
     if isinstance(
         application_error,
         (
+            ApprovalDecisionConflictError,
+            ApprovalLifecycleConflictError,
+            ApprovalRevalidationError,
+        ),
+    ):
+        return _error_response(
+            status.HTTP_409_CONFLICT,
+            "approval_conflict",
+            "The approval can no longer authorize this action.",
+        )
+    if isinstance(
+        application_error,
+        (
             AgentDefinitionNotFoundError,
             AgentTeamMismatchError,
             AgentVersionNotFoundError,
+            ApprovalNotFoundError,
+            ApprovalTeamMismatchError,
             ConversationNotFoundError,
             ConversationTeamMismatchError,
             TurnNotFoundError,

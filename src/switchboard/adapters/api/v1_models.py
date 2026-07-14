@@ -6,7 +6,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from switchboard.domain.approvals import ApprovalStatus
+from switchboard.domain.command_receipts import ApprovalDecision
 from switchboard.domain.conversations import ConversationStatus, MessageRole
+from switchboard.domain.tool_invocations import ToolInvocationStatus
+from switchboard.domain.tools import ToolEffect
 from switchboard.domain.turns import TurnAttemptStatus, TurnStatus
 
 MAX_MESSAGE_CONTENT_LENGTH = 32_000
@@ -94,6 +98,34 @@ class V1TurnResponse(V1Model):
     completed_at: datetime | None
     attempts: tuple[V1TurnAttemptResponse, ...]
     events_url: str
+
+
+class V1ApprovalDecisionRequest(V1Model):
+    decision: ApprovalDecision
+
+
+class V1ApprovalSafeSummary(V1Model):
+    tool_definition_id: UUID
+    tool_version_id: UUID
+    effect: ToolEffect
+    argument_fields: tuple[str, ...]
+
+
+class V1ApprovalResponse(V1Model):
+    approval_id: UUID
+    invocation_id: UUID
+    requester_actor_id: UUID
+    status: ApprovalStatus
+    safe_summary: V1ApprovalSafeSummary
+    fingerprint_version: str
+    created_at: datetime
+    expires_at: datetime
+    resolved_by_actor_id: UUID | None
+    resolved_at: datetime | None
+
+
+class V1ApprovalDecisionResponse(V1ApprovalResponse):
+    invocation_status: ToolInvocationStatus
 
 
 class V1ValidationIssue(V1Model):

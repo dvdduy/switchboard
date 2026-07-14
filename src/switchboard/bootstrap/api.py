@@ -19,6 +19,7 @@ def build_app() -> FastAPI:
         close_resources=resources.close,
         replay_turn_events=resources.replay_turn_events,
         conversation_api_services=resources.conversation_api_services,
+        approval_api_services=resources.approval_api_services,
     )
 
 

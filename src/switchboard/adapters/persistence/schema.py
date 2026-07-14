@@ -368,13 +368,16 @@ turns = Table(
         name="input_message_turn",
     ),
     CheckConstraint(
-        ("status IN ('received', 'running', 'completed', 'failed', 'cancelled')"),
+        (
+            "status IN ('received', 'running', 'awaiting_confirmation', "
+            "'completed', 'failed', 'cancelled')"
+        ),
         name="status_valid",
     ),
     CheckConstraint(
         """
         (
-            status IN ('received', 'running')
+            status IN ('received', 'running', 'awaiting_confirmation')
             AND completed_at IS NULL
         )
         OR
@@ -454,7 +457,10 @@ turn_attempts = Table(
         name="attempt_number_positive",
     ),
     CheckConstraint(
-        ("status IN ('pending', 'running', 'succeeded', 'failed')"),
+        (
+            "status IN ('pending', 'running', 'awaiting_confirmation', "
+            "'succeeded', 'failed', 'cancelled')"
+        ),
         name="status_valid",
     ),
     CheckConstraint(
@@ -467,7 +473,7 @@ turn_attempts = Table(
         )
         OR
         (
-            status = 'running'
+            status IN ('running', 'awaiting_confirmation')
             AND started_at IS NOT NULL
             AND completed_at IS NULL
             AND failure_code IS NULL
@@ -486,6 +492,13 @@ turn_attempts = Table(
             AND completed_at IS NOT NULL
             AND failure_code IS NOT NULL
             AND btrim(failure_code) <> ''
+        )
+        OR
+        (
+            status = 'cancelled'
+            AND started_at IS NOT NULL
+            AND completed_at IS NOT NULL
+            AND failure_code IS NULL
         )
         """,
         name="lifecycle_fields_match_status",
@@ -524,7 +537,7 @@ command_receipts = Table(
             deferrable=True,
             initially="DEFERRED",
         ),
-        nullable=False,
+        nullable=True,
     ),
     Column(
         "message_id",
@@ -535,7 +548,7 @@ command_receipts = Table(
             deferrable=True,
             initially="DEFERRED",
         ),
-        nullable=False,
+        nullable=True,
     ),
     Column(
         "turn_id",
@@ -546,7 +559,7 @@ command_receipts = Table(
             deferrable=True,
             initially="DEFERRED",
         ),
-        nullable=False,
+        nullable=True,
     ),
     Column(
         "attempt_id",
@@ -557,8 +570,16 @@ command_receipts = Table(
             deferrable=True,
             initially="DEFERRED",
         ),
-        nullable=False,
+        nullable=True,
     ),
+    Column(
+        "approval_id",
+        Uuid(as_uuid=True),
+        ForeignKey("approval_requests.id", ondelete="RESTRICT"),
+        nullable=True,
+    ),
+    Column("actor_id", Uuid(as_uuid=True), nullable=True),
+    Column("approval_decision", String(16), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint(
         "team_id",
@@ -568,7 +589,7 @@ command_receipts = Table(
         name="command_receipt_authority",
     ),
     CheckConstraint(
-        "operation IN ('create_conversation', 'continue_conversation')",
+        "operation IN ('create_conversation', 'continue_conversation', 'decide_approval')",
         name="operation_valid",
     ),
     CheckConstraint(
@@ -578,8 +599,37 @@ command_receipts = Table(
             operation = 'continue_conversation'
             AND command_scope = conversation_id::text
         )
+        OR (
+            operation = 'decide_approval'
+            AND command_scope = approval_id::text
+        )
         """,
         name="scope_matches_operation",
+    ),
+    CheckConstraint(
+        """
+        (
+            operation IN ('create_conversation', 'continue_conversation')
+            AND conversation_id IS NOT NULL
+            AND message_id IS NOT NULL
+            AND turn_id IS NOT NULL
+            AND attempt_id IS NOT NULL
+            AND approval_id IS NULL
+            AND actor_id IS NULL
+            AND approval_decision IS NULL
+        )
+        OR (
+            operation = 'decide_approval'
+            AND conversation_id IS NULL
+            AND message_id IS NULL
+            AND turn_id IS NULL
+            AND attempt_id IS NULL
+            AND approval_id IS NOT NULL
+            AND actor_id IS NOT NULL
+            AND approval_decision IN ('approve', 'reject')
+        )
+        """,
+        name="result_matches_operation",
     ),
     CheckConstraint(
         "idempotency_key_hash ~ '^[0-9a-f]{64}$'",
@@ -654,12 +704,15 @@ execution_events = Table(
         """
         kind IN (
             'turn.started',
+            'approval.required',
+            'approval.resolved',
             'tool.started',
             'tool.completed',
             'tool.failed',
             'response.delta',
             'turn.completed',
-            'turn.failed'
+            'turn.failed',
+            'turn.cancelled'
         )
         """,
         name="kind_valid",
@@ -739,6 +792,14 @@ tool_invocations = Table(
     UniqueConstraint("attempt_id", name="attempt_tool_invocation"),
     UniqueConstraint("turn_id", "invocation_number", name="turn_invocation_number"),
     UniqueConstraint("idempotency_key", name="tool_invocation_idempotency_key"),
+    UniqueConstraint(
+        "id",
+        "turn_id",
+        "attempt_id",
+        "tool_definition_id",
+        "tool_version_id",
+        name="tool_invocation_policy_identity",
+    ),
     CheckConstraint("invocation_number = 1", name="invocation_number_day_7"),
     CheckConstraint("jsonb_typeof(arguments) = 'object'", name="arguments_is_object"),
     CheckConstraint(
@@ -751,7 +812,10 @@ tool_invocations = Table(
         name="authorized_scopes_bounded_array",
     ),
     CheckConstraint(
-        "status IN ('pending', 'running', 'succeeded', 'failed')",
+        (
+            "status IN ('pending', 'awaiting_confirmation', 'running', "
+            "'succeeded', 'failed', 'cancelled')"
+        ),
         name="status_valid",
     ),
     CheckConstraint(
@@ -765,7 +829,7 @@ tool_invocations = Table(
     CheckConstraint(
         """
         (
-            status = 'pending'
+            status IN ('pending', 'awaiting_confirmation')
             AND started_at IS NULL
             AND completed_at IS NULL
             AND result IS NULL
@@ -792,6 +856,13 @@ tool_invocations = Table(
             AND result IS NULL
             AND failure_code IS NOT NULL
         )
+        OR (
+            status = 'cancelled'
+            AND started_at IS NULL
+            AND completed_at IS NOT NULL
+            AND result IS NULL
+            AND failure_code IS NULL
+        )
         """,
         name="lifecycle_fields_match_status",
     ),
@@ -800,10 +871,239 @@ tool_invocations = Table(
         name="started_at_not_before_created_at",
     ),
     CheckConstraint(
-        "completed_at IS NULL OR (started_at IS NOT NULL AND completed_at >= started_at)",
+        "completed_at IS NULL OR (status = 'cancelled' AND completed_at >= created_at) "
+        "OR (started_at IS NOT NULL AND completed_at >= started_at)",
         name="completed_at_not_before_started_at",
     ),
     Index("ix_tool_invocations_status", "status"),
+)
+
+
+policy_evaluations = Table(
+    "policy_evaluations",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column("team_id", Uuid(as_uuid=True), nullable=False),
+    Column("requester_actor_id", Uuid(as_uuid=True), nullable=False),
+    Column(
+        "agent_version_id",
+        Uuid(as_uuid=True),
+        ForeignKey("agent_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("turn_id", Uuid(as_uuid=True), nullable=False),
+    Column("attempt_id", Uuid(as_uuid=True), nullable=False),
+    Column("invocation_id", Uuid(as_uuid=True), nullable=True),
+    Column("tool_definition_id", Uuid(as_uuid=True), nullable=False),
+    Column("tool_version_id", Uuid(as_uuid=True), nullable=False),
+    Column("effect", String(32), nullable=False),
+    Column("environment", String(32), nullable=False),
+    Column("required_scopes", JSONB, nullable=False),
+    Column("granted_scopes", JSONB, nullable=False),
+    Column("policy_version", String(50), nullable=False),
+    Column("decision", String(32), nullable=False),
+    Column("reason_code", String(100), nullable=False),
+    Column("fingerprint_version", String(32), nullable=False),
+    Column("fingerprint_digest", String(64), nullable=False),
+    Column("evaluated_at", DateTime(timezone=True), nullable=False),
+    ForeignKeyConstraint(
+        ["team_id", "tool_definition_id"],
+        ["tool_definitions.team_id", "tool_definitions.id"],
+        name="policy_evaluation_team_tool",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["turn_id", "attempt_id"],
+        ["turn_attempts.turn_id", "turn_attempts.id"],
+        name="policy_evaluation_attempt",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["tool_definition_id", "tool_version_id"],
+        ["tool_versions.tool_definition_id", "tool_versions.id"],
+        name="policy_evaluation_tool_version",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        [
+            "invocation_id",
+            "turn_id",
+            "attempt_id",
+            "tool_definition_id",
+            "tool_version_id",
+        ],
+        [
+            "tool_invocations.id",
+            "tool_invocations.turn_id",
+            "tool_invocations.attempt_id",
+            "tool_invocations.tool_definition_id",
+            "tool_invocations.tool_version_id",
+        ],
+        name="policy_evaluation_invocation",
+        ondelete="RESTRICT",
+    ),
+    UniqueConstraint(
+        "id",
+        "team_id",
+        "requester_actor_id",
+        "invocation_id",
+        "fingerprint_version",
+        "fingerprint_digest",
+        "tool_definition_id",
+        "tool_version_id",
+        "effect",
+        name="policy_evaluation_approval_identity",
+    ),
+    CheckConstraint(
+        "environment IN ('development', 'test', 'production')",
+        name="environment_valid",
+    ),
+    CheckConstraint(
+        "effect IN ('read_only', 'mutating', 'external_side_effect', 'privileged')",
+        name="effect_valid",
+    ),
+    CheckConstraint(
+        "jsonb_typeof(required_scopes) = 'array' "
+        "AND jsonb_array_length(required_scopes) BETWEEN 1 AND 32",
+        name="required_scopes_bounded_array",
+    ),
+    CheckConstraint(
+        "jsonb_typeof(granted_scopes) = 'array' "
+        "AND jsonb_array_length(granted_scopes) BETWEEN 0 AND 32",
+        name="granted_scopes_bounded_array",
+    ),
+    CheckConstraint("policy_version = 'day8-v1'", name="policy_version_valid"),
+    CheckConstraint(
+        "decision IN ('allow', 'deny', 'require_confirmation', 'require_elevated_approval')",
+        name="decision_valid",
+    ),
+    CheckConstraint(
+        "(decision = 'allow' AND effect = 'read_only') "
+        "OR (decision = 'require_confirmation' AND effect = 'mutating') "
+        "OR decision IN ('deny', 'require_elevated_approval')",
+        name="decision_matches_effect",
+    ),
+    CheckConstraint(
+        "reason_code ~ '^[a-z][a-z0-9._-]{0,99}$'",
+        name="reason_code_valid",
+    ),
+    CheckConstraint(
+        "fingerprint_version = 'action-v1'",
+        name="fingerprint_version_valid",
+    ),
+    CheckConstraint(
+        "fingerprint_digest ~ '^[0-9a-f]{64}$'",
+        name="fingerprint_digest_valid",
+    ),
+    Index("ix_policy_evaluations_invocation", "invocation_id", "evaluated_at"),
+)
+
+
+approval_requests = Table(
+    "approval_requests",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column("team_id", Uuid(as_uuid=True), nullable=False),
+    Column("policy_evaluation_id", Uuid(as_uuid=True), nullable=False),
+    Column("invocation_id", Uuid(as_uuid=True), nullable=False),
+    Column("requester_actor_id", Uuid(as_uuid=True), nullable=False),
+    Column("fingerprint_version", String(32), nullable=False),
+    Column("fingerprint_digest", String(64), nullable=False),
+    Column("tool_definition_id", Uuid(as_uuid=True), nullable=False),
+    Column("tool_version_id", Uuid(as_uuid=True), nullable=False),
+    Column("effect", String(32), nullable=False),
+    Column("argument_fields", JSONB, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("resolved_by_actor_id", Uuid(as_uuid=True), nullable=True),
+    Column("resolved_at", DateTime(timezone=True), nullable=True),
+    Column("consumed_at", DateTime(timezone=True), nullable=True),
+    ForeignKeyConstraint(
+        [
+            "policy_evaluation_id",
+            "team_id",
+            "requester_actor_id",
+            "invocation_id",
+            "fingerprint_version",
+            "fingerprint_digest",
+            "tool_definition_id",
+            "tool_version_id",
+            "effect",
+        ],
+        [
+            "policy_evaluations.id",
+            "policy_evaluations.team_id",
+            "policy_evaluations.requester_actor_id",
+            "policy_evaluations.invocation_id",
+            "policy_evaluations.fingerprint_version",
+            "policy_evaluations.fingerprint_digest",
+            "policy_evaluations.tool_definition_id",
+            "policy_evaluations.tool_version_id",
+            "policy_evaluations.effect",
+        ],
+        name="approval_policy_evaluation",
+        ondelete="RESTRICT",
+    ),
+    CheckConstraint(
+        "fingerprint_version = 'action-v1'",
+        name="fingerprint_version_valid",
+    ),
+    CheckConstraint(
+        "fingerprint_digest ~ '^[0-9a-f]{64}$'",
+        name="fingerprint_digest_valid",
+    ),
+    CheckConstraint("effect = 'mutating'", name="effect_requires_confirmation"),
+    CheckConstraint(
+        "jsonb_typeof(argument_fields) = 'array'",
+        name="argument_fields_is_array",
+    ),
+    CheckConstraint(
+        "status IN ('pending', 'approved', 'rejected', 'expired', 'consumed')",
+        name="status_valid",
+    ),
+    CheckConstraint("expires_at > created_at", name="expires_at_after_created_at"),
+    CheckConstraint(
+        """
+        (
+            status = 'pending'
+            AND resolved_by_actor_id IS NULL
+            AND resolved_at IS NULL
+            AND consumed_at IS NULL
+        )
+        OR (
+            status IN ('approved', 'rejected')
+            AND resolved_by_actor_id IS NOT NULL
+            AND resolved_at IS NOT NULL
+            AND resolved_at < expires_at
+            AND consumed_at IS NULL
+        )
+        OR (
+            status = 'expired'
+            AND resolved_by_actor_id IS NULL
+            AND resolved_at IS NOT NULL
+            AND resolved_at >= expires_at
+            AND consumed_at IS NULL
+        )
+        OR (
+            status = 'consumed'
+            AND resolved_by_actor_id IS NOT NULL
+            AND resolved_at IS NOT NULL
+            AND consumed_at IS NOT NULL
+            AND resolved_at < expires_at
+            AND consumed_at >= resolved_at
+            AND consumed_at < expires_at
+        )
+        """,
+        name="lifecycle_fields_match_status",
+    ),
+    Index("ix_approval_requests_team_status_expiry", "team_id", "status", "expires_at"),
+    Index(
+        "uq_approval_requests_active_invocation",
+        "invocation_id",
+        unique=True,
+        postgresql_where=text("status IN ('pending', 'approved')"),
+    ),
 )
 
 

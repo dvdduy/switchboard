@@ -5,6 +5,7 @@ from typing import Protocol, Self
 
 from switchboard.application.ports.repositories import (
     AgentRepository,
+    ApprovalRepository,
     CommandReceiptRepository,
     ConversationRepository,
     ConversationSummaryRepository,
@@ -18,6 +19,7 @@ class UnitOfWork(Protocol):
     """Owns one atomic application transaction."""
 
     agents: AgentRepository
+    approvals: ApprovalRepository
     command_receipts: CommandReceiptRepository
     conversations: ConversationRepository
     summaries: ConversationSummaryRepository

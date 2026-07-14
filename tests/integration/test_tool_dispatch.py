@@ -17,8 +17,11 @@ from switchboard.application.services.tool_dispatch import (
 from switchboard.application.services.tool_manifest_validation import ToolManifestValidator
 from switchboard.domain.execution_events import ExecutionEventKind
 from switchboard.domain.identifiers import (
+    ActorId,
     AgentToolBindingId,
+    ApprovalRequestId,
     ExecutionEventId,
+    PolicyEvaluationId,
     ToolConformanceCaseResultId,
     ToolConformanceRunId,
     ToolDefinitionId,
@@ -115,6 +118,7 @@ async def test_read_only_dispatch_persists_lifecycle_and_safe_ordered_events(
     handler = DurableToolCallHandler(
         context=ToolDispatchContext(
             team_id=conversation.team_id,
+            actor_id=ActorId(uuid4()),
             agent_version_id=turn.agent_version_id,
             turn_id=turn.id,
             attempt_id=attempt.id,
@@ -127,6 +131,8 @@ async def test_read_only_dispatch_persists_lifecycle_and_safe_ordered_events(
         schema_validator=Draft202012JsonSchemaValidator(),
         clock=FixedClock(),
         invocation_ids=Generator(lambda: ToolInvocationId(uuid4())),
+        policy_evaluation_ids=Generator(lambda: PolicyEvaluationId(uuid4())),
+        approval_ids=Generator(lambda: ApprovalRequestId(uuid4())),
         event_ids=Generator(lambda: ExecutionEventId(uuid4())),
     )
 

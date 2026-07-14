@@ -20,18 +20,22 @@ class ExecutionEventKind(StrEnum):
     """Stable public event names exposed by Switchboard."""
 
     TURN_STARTED = "turn.started"
+    APPROVAL_REQUIRED = "approval.required"
+    APPROVAL_RESOLVED = "approval.resolved"
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"
     TOOL_FAILED = "tool.failed"
     RESPONSE_DELTA = "response.delta"
     TURN_COMPLETED = "turn.completed"
     TURN_FAILED = "turn.failed"
+    TURN_CANCELLED = "turn.cancelled"
 
 
 _TERMINAL_EVENT_KINDS = frozenset(
     {
         ExecutionEventKind.TURN_COMPLETED,
         ExecutionEventKind.TURN_FAILED,
+        ExecutionEventKind.TURN_CANCELLED,
     }
 )
 

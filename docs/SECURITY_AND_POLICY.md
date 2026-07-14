@@ -20,7 +20,7 @@ Untrusted / partially trusted:
 - product-provided descriptions and prompts
 
 Trusted enforcement boundary:
-- Switchboard API authentication
+- trusted Day 8 development team/actor context
 - policy engine
 - schema validation
 - durable approval records
@@ -30,7 +30,9 @@ Trusted enforcement boundary:
 
 ## Authentication and authorization
 
-The first implementation may use development identities, but the domain contract must model:
+Day 8 uses explicit `X-Team-ID` and `X-Actor-ID` UUIDs as trusted development
+fixtures. They are not authentication, membership proof, or delegated authority.
+The domain contract nevertheless models:
 
 - authenticated actor ID;
 - team membership;
@@ -52,17 +54,14 @@ A tool's class is part of its immutable manifest version.
 
 ## Policy evaluation
 
-Input context includes:
+The implemented pure `day8-v1` evaluator receives:
 
 - actor and team;
 - agent version;
 - tool version and effect;
 - required and granted scopes;
 - environment;
-- normalized argument summary;
-- data sensitivity;
-- prior approval;
-- configured budgets and quotas.
+- canonical immutable arguments.
 
 Output is structured and versioned:
 
@@ -73,19 +72,31 @@ REQUIRE_CONFIRMATION
 REQUIRE_ELEVATED_APPROVAL
 ```
 
+Valid read-only calls return `ALLOW`; valid mutating calls return
+`REQUIRE_CONFIRMATION`; external-side-effect and privileged calls return
+`DENY`. Ownership, binding, activation/conformance, and scope failures take
+precedence. Elevated approval remains reserved.
+
 ## Approval integrity
 
-An approval request stores:
+The implemented approval request stores:
 
-- human-readable action summary;
-- tool version;
-- normalized-argument fingerprint;
-- policy version;
-- required approver class;
+- exact tool identities and a value-free summary of effect and sorted top-level
+  argument field names;
+- an `action-v1` SHA-256 fingerprint covering team, requester, agent/tool
+  versions, effect, environment, policy version, and canonical arguments;
 - expiration;
 - requester and approver identity.
 
-Any meaningful argument or policy change invalidates the approval.
+The linked invocation remains the durable argument source. Public reads/events
+omit argument values and the digest. Any meaningful action or policy change
+invalidates resume.
+
+Decision commands fingerprint team, approval, actor, and decision behind a
+hashed idempotency key. PostgreSQL row locking and compare-and-set lifecycle
+updates select one decision/resume winner. Approval consumption, invocation
+start, resumed lifecycle, and `tool.started` commit before adapter dispatch;
+the adapter call holds no transaction.
 
 ## Prompt-injection and untrusted output
 
@@ -98,7 +109,8 @@ Tool output and retrieved documents are data, not authority. They cannot:
 - alter policy decisions;
 - cause a new tool to become bound.
 
-The reference tool suite includes malicious-looking content to verify these boundaries.
+Focused tests use malicious-looking argument text to verify these boundaries;
+it affects the fingerprint as data but never grants authority.
 
 ## Data handling
 
@@ -151,3 +163,8 @@ Mutating and privileged actions record:
 - regional data residency;
 - formal compliance certification;
 - production secret rotation and vault integration.
+- separation of duties, elevated/admin approval, and approval delegation;
+- external-side-effect execution, unknown-outcome reconciliation, and safe
+  post-dispatch crash recovery;
+- approval notification, batching, retention, and richer sensitivity-aware
+  summaries.

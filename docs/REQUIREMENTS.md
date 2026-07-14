@@ -84,10 +84,13 @@ multi-step planning, or persisted pauses.
 | FR-033 | P0 | Treat tool output and retrieved content as untrusted input. | Malicious tool output cannot alter platform permissions or bypass confirmation. |
 | FR-034 | P0 | Record an audit trail for mutating and privileged operations. | The audit record identifies requester, approver, policy, tool version, arguments summary, and outcome. |
 
-Day 7 partially evidences FR-030 and FR-033: manifest effect classification
-blocks every non-read-only invocation, tool output is normalized and treated as
-data, and the graph cannot accept a second tool request. Full policy decisions,
-production identity, and confirmations remain Day 8 work.
+Day 8 evidences the Phase 1 subset of FR-030 through FR-034: a pure versioned
+policy matrix allows valid read-only calls, requires fingerprint-bound durable
+confirmation for valid mutations, denies external-side-effect and privileged
+effects, treats model/tool text as non-authoritative data, and persists safe
+requester/approver/policy/tool/outcome audit. Production identity, elevated
+approval, automatic durable dispatch, and unknown-outcome reconciliation remain
+deferred.
 
 ### Durable execution
 

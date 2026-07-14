@@ -55,6 +55,32 @@ def test_turn_follows_valid_lifecycle() -> None:
     assert completed.completed_at == completed_at
 
 
+def test_turn_and_attempt_pause_and_resume_without_becoming_terminal() -> None:
+    running_turn = make_turn().start()
+    running_attempt = make_attempt().start(at=make_attempt().created_at)
+
+    paused_turn = running_turn.await_confirmation()
+    paused_attempt = running_attempt.await_confirmation()
+
+    assert paused_turn.status is TurnStatus.AWAITING_CONFIRMATION
+    assert paused_turn.completed_at is None
+    assert paused_attempt.status is TurnAttemptStatus.AWAITING_CONFIRMATION
+    assert paused_attempt.completed_at is None
+    assert paused_turn.resume().status is TurnStatus.RUNNING
+    assert paused_attempt.resume().status is TurnAttemptStatus.RUNNING
+
+
+def test_paused_turn_and_attempt_can_be_cancelled() -> None:
+    at = make_attempt().created_at
+    turn = make_turn().start().await_confirmation().cancel(at=at)
+    attempt = make_attempt().start(at=at).await_confirmation().cancel(at=at)
+
+    assert turn.status is TurnStatus.CANCELLED
+    assert turn.is_terminal
+    assert attempt.status is TurnAttemptStatus.CANCELLED
+    assert attempt.completed_at == at
+
+
 def test_completed_turn_cannot_be_started_again() -> None:
     turn = make_turn().start().complete(at=datetime(2026, 7, 13, 16, 1, tzinfo=UTC))
 

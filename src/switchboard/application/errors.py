@@ -155,6 +155,26 @@ class ToolInvocationLifecycleConflictError(ApplicationError):
     """Raised when an invocation lifecycle changed after it was read."""
 
 
+class ApprovalLifecycleConflictError(ApplicationError):
+    """Raised when an approval lifecycle changed after it was read."""
+
+
+class ApprovalNotFoundError(ApplicationError):
+    """Raised when an approval is unavailable to the requesting team."""
+
+
+class ApprovalTeamMismatchError(ApplicationError):
+    """Raised when an approval belongs to another team."""
+
+
+class ApprovalDecisionConflictError(ApplicationError):
+    """Raised when a decision conflicts with durable approval state."""
+
+
+class ApprovalRevalidationError(ApplicationError):
+    """Raised when an approved action no longer matches trusted durable state."""
+
+
 class ToolDispatchError(ApplicationError):
     """Raised with a stable safe code when one tool call cannot complete."""
 

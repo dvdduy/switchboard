@@ -12,11 +12,13 @@ from switchboard.adapters.persistence.schema import (
     agent_definitions,
     agent_tool_bindings,
     agent_versions,
+    approval_requests,
     command_receipts,
     conversation_summaries,
     conversations,
     execution_events,
     messages,
+    policy_evaluations,
     tool_conformance_case_results,
     tool_conformance_runs,
     tool_definitions,
@@ -33,6 +35,8 @@ from switchboard.adapters.persistence.translators import (
     agent_tool_binding_to_record,
     agent_version_from_record,
     agent_version_to_record,
+    approval_request_from_record,
+    approval_request_to_record,
     command_receipt_from_record,
     command_receipt_to_record,
     conversation_from_record,
@@ -43,6 +47,8 @@ from switchboard.adapters.persistence.translators import (
     execution_event_to_record,
     message_from_record,
     message_to_record,
+    policy_evaluation_from_record,
+    policy_evaluation_to_record,
     tool_conformance_case_result_from_record,
     tool_conformance_case_result_to_record,
     tool_conformance_run_from_record,
@@ -61,6 +67,7 @@ from switchboard.adapters.persistence.translators import (
     turn_to_record,
 )
 from switchboard.application.errors import (
+    ApprovalLifecycleConflictError,
     ConversationNotFoundError,
     ToolDefinitionNotFoundError,
     ToolInvocationLifecycleConflictError,
@@ -71,6 +78,7 @@ from switchboard.application.errors import (
     TurnNotFoundError,
 )
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.approvals import ApprovalRequest, PolicyEvaluationRecord
 from switchboard.domain.command_receipts import CommandOperation, CommandReceipt
 from switchboard.domain.context import ConversationSummary
 from switchboard.domain.conversations import Conversation, Message, MessageRole
@@ -82,9 +90,11 @@ from switchboard.domain.identifiers import (
     AgentDefinitionId,
     AgentToolBindingId,
     AgentVersionId,
+    ApprovalRequestId,
     ConversationId,
     ExecutionEventId,
     MessageId,
+    PolicyEvaluationId,
     TeamId,
     ToolConformanceRunId,
     ToolDefinitionId,
@@ -625,6 +635,11 @@ class SqlAlchemyTurnRepository:
                 ExecutionEventKind.TOOL_FAILED,
                 ExecutionEventKind.RESPONSE_DELTA,
             }
+        elif turn.status is TurnStatus.AWAITING_CONFIRMATION:
+            allowed_kinds = {
+                ExecutionEventKind.APPROVAL_REQUIRED,
+                ExecutionEventKind.APPROVAL_RESOLVED,
+            }
         elif turn.status is TurnStatus.COMPLETED:
             allowed_kinds = {
                 ExecutionEventKind.TURN_COMPLETED,
@@ -633,6 +648,8 @@ class SqlAlchemyTurnRepository:
             allowed_kinds = {
                 ExecutionEventKind.TURN_FAILED,
             }
+        elif turn.status is TurnStatus.CANCELLED:
+            allowed_kinds = {ExecutionEventKind.TURN_CANCELLED}
         else:
             allowed_kinds = set()
 
@@ -776,6 +793,128 @@ class SqlAlchemyToolInvocationRepository:
         if result.scalar_one_or_none() is None:
             raise ToolInvocationLifecycleConflictError(
                 f"tool invocation {previous.id} lifecycle changed after it was read"
+            )
+
+
+class SqlAlchemyApprovalRepository:
+    """Persists immutable policy audit and CAS approval lifecycle state."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_evaluation(self, evaluation: PolicyEvaluationRecord) -> None:
+        await self._session.execute(
+            insert(policy_evaluations).values(policy_evaluation_to_record(evaluation))
+        )
+
+    async def get_evaluation(
+        self,
+        evaluation_id: PolicyEvaluationId,
+    ) -> PolicyEvaluationRecord | None:
+        result = await self._session.execute(
+            select(policy_evaluations).where(policy_evaluations.c.id == evaluation_id)
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else policy_evaluation_from_record(record)
+
+    async def list_evaluations_for_invocation(
+        self,
+        invocation_id: ToolInvocationId,
+    ) -> tuple[PolicyEvaluationRecord, ...]:
+        result = await self._session.execute(
+            select(policy_evaluations)
+            .where(policy_evaluations.c.invocation_id == invocation_id)
+            .order_by(policy_evaluations.c.evaluated_at, policy_evaluations.c.id)
+        )
+        return tuple(policy_evaluation_from_record(record) for record in result.mappings())
+
+    async def add_request(self, approval: ApprovalRequest) -> None:
+        await self._session.execute(
+            insert(approval_requests).values(approval_request_to_record(approval))
+        )
+
+    async def get_request(self, approval_id: ApprovalRequestId) -> ApprovalRequest | None:
+        result = await self._session.execute(
+            select(approval_requests).where(approval_requests.c.id == approval_id)
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else approval_request_from_record(record)
+
+    async def get_request_for_update(
+        self,
+        approval_id: ApprovalRequestId,
+    ) -> ApprovalRequest | None:
+        result = await self._session.execute(
+            select(approval_requests).where(approval_requests.c.id == approval_id).with_for_update()
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else approval_request_from_record(record)
+
+    async def list_requests_for_invocation(
+        self,
+        invocation_id: ToolInvocationId,
+    ) -> tuple[ApprovalRequest, ...]:
+        result = await self._session.execute(
+            select(approval_requests)
+            .where(approval_requests.c.invocation_id == invocation_id)
+            .order_by(approval_requests.c.created_at, approval_requests.c.id)
+        )
+        return tuple(approval_request_from_record(record) for record in result.mappings())
+
+    async def update_lifecycle(
+        self,
+        *,
+        previous: ApprovalRequest,
+        updated: ApprovalRequest,
+    ) -> None:
+        previous_immutable = (
+            previous.id,
+            previous.team_id,
+            previous.policy_evaluation_id,
+            previous.invocation_id,
+            previous.requester_actor_id,
+            previous.fingerprint,
+            previous.safe_summary,
+            previous.created_at,
+            previous.expires_at,
+        )
+        updated_immutable = (
+            updated.id,
+            updated.team_id,
+            updated.policy_evaluation_id,
+            updated.invocation_id,
+            updated.requester_actor_id,
+            updated.fingerprint,
+            updated.safe_summary,
+            updated.created_at,
+            updated.expires_at,
+        )
+        if previous_immutable != updated_immutable:
+            raise ValueError("approval lifecycle transition must preserve immutable fields")
+
+        result = await self._session.execute(
+            update(approval_requests)
+            .where(
+                approval_requests.c.id == previous.id,
+                approval_requests.c.status == previous.status.value,
+                _matches_nullable(
+                    approval_requests.c.resolved_by_actor_id,
+                    previous.resolved_by_actor_id,
+                ),
+                _matches_nullable(approval_requests.c.resolved_at, previous.resolved_at),
+                _matches_nullable(approval_requests.c.consumed_at, previous.consumed_at),
+            )
+            .values(
+                status=updated.status.value,
+                resolved_by_actor_id=updated.resolved_by_actor_id,
+                resolved_at=updated.resolved_at,
+                consumed_at=updated.consumed_at,
+            )
+            .returning(approval_requests.c.id)
+        )
+        if result.scalar_one_or_none() is None:
+            raise ApprovalLifecycleConflictError(
+                f"approval {previous.id} lifecycle changed after it was read"
             )
 
 

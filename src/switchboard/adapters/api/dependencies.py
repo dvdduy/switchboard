@@ -7,9 +7,12 @@ from uuid import UUID
 from fastapi import Header
 
 from switchboard.adapters.system import SystemClock, UuidGenerator
+from switchboard.application.ports.json_schema import JsonSchemaValidator
+from switchboard.application.ports.tool_adapter import ToolAdapterResolver
 from switchboard.application.ports.unit_of_work import UnitOfWorkFactory
 from switchboard.application.services.command_idempotency import hash_idempotency_key
 from switchboard.application.use_cases.continue_conversation import ContinueConversation
+from switchboard.application.use_cases.manage_approvals import ManageApprovals
 from switchboard.application.use_cases.read_conversations import (
     GetConversation,
     GetTurn,
@@ -17,8 +20,10 @@ from switchboard.application.use_cases.read_conversations import (
 )
 from switchboard.application.use_cases.start_conversation import StartConversation
 from switchboard.domain.identifiers import (
+    ActorId,
     CommandReceiptId,
     ConversationId,
+    ExecutionEventId,
     MessageId,
     TeamId,
     TurnAttemptId,
@@ -35,6 +40,32 @@ class ConversationApiServices:
     get_conversation: GetConversation
     list_messages: ListConversationMessages
     get_turn: GetTurn
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalApiServices:
+    """Application services consumed by the v1 approval transport."""
+
+    manage: ManageApprovals
+
+
+def build_approval_api_services(
+    unit_of_work_factory: UnitOfWorkFactory,
+    *,
+    adapter_resolver: ToolAdapterResolver,
+    schema_validator: JsonSchemaValidator,
+) -> ApprovalApiServices:
+    clock = SystemClock()
+    return ApprovalApiServices(
+        manage=ManageApprovals(
+            unit_of_work_factory=unit_of_work_factory,
+            adapter_resolver=adapter_resolver,
+            schema_validator=schema_validator,
+            clock=clock,
+            receipt_ids=UuidGenerator(CommandReceiptId),
+            event_ids=UuidGenerator(ExecutionEventId),
+        )
+    )
 
 
 def build_conversation_api_services(
@@ -96,6 +127,21 @@ def require_idempotency_key(
 
     hash_idempotency_key(idempotency_key)
     return idempotency_key
+
+
+def require_actor_id(
+    x_actor_id: Annotated[
+        UUID,
+        Header(
+            alias="X-Actor-ID",
+            description="Development-only actor identity; not production authentication.",
+            examples=["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+        ),
+    ],
+) -> ActorId:
+    """Convert explicit development actor context to a domain identity."""
+
+    return ActorId(x_actor_id)
 
 
 def conversation_url(conversation_id: ConversationId) -> str:

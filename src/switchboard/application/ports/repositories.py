@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Protocol
 
 from switchboard.domain.agents import AgentDefinition, AgentVersion
+from switchboard.domain.approvals import ApprovalRequest, PolicyEvaluationRecord
 from switchboard.domain.command_receipts import CommandOperation, CommandReceipt
 from switchboard.domain.context import ConversationSummary
 from switchboard.domain.conversations import Conversation, Message, MessageRole
@@ -16,9 +17,11 @@ from switchboard.domain.identifiers import (
     AgentDefinitionId,
     AgentToolBindingId,
     AgentVersionId,
+    ApprovalRequestId,
     ConversationId,
     ExecutionEventId,
     MessageId,
+    PolicyEvaluationId,
     TeamId,
     ToolConformanceRunId,
     ToolDefinitionId,
@@ -267,6 +270,51 @@ class ToolInvocationRepository(Protocol):
         updated: ToolInvocation,
     ) -> None:
         """Persist a focused invocation lifecycle compare-and-set update."""
+
+
+class ApprovalRepository(Protocol):
+    """Persistence operations for immutable policy audit and durable approval."""
+
+    async def add_evaluation(self, evaluation: PolicyEvaluationRecord) -> None:
+        """Persist one immutable policy evaluation."""
+
+    async def get_evaluation(
+        self,
+        evaluation_id: PolicyEvaluationId,
+    ) -> PolicyEvaluationRecord | None:
+        """Return one immutable policy evaluation."""
+
+    async def list_evaluations_for_invocation(
+        self,
+        invocation_id: ToolInvocationId,
+    ) -> tuple[PolicyEvaluationRecord, ...]:
+        """Return invocation evaluations in durable order."""
+
+    async def add_request(self, approval: ApprovalRequest) -> None:
+        """Persist one pending fingerprint-bound approval request."""
+
+    async def get_request(self, approval_id: ApprovalRequestId) -> ApprovalRequest | None:
+        """Return one approval request by identity."""
+
+    async def get_request_for_update(
+        self,
+        approval_id: ApprovalRequestId,
+    ) -> ApprovalRequest | None:
+        """Lock and return one approval request for a short decision transaction."""
+
+    async def list_requests_for_invocation(
+        self,
+        invocation_id: ToolInvocationId,
+    ) -> tuple[ApprovalRequest, ...]:
+        """Return invocation approval requests in durable order."""
+
+    async def update_lifecycle(
+        self,
+        *,
+        previous: ApprovalRequest,
+        updated: ApprovalRequest,
+    ) -> None:
+        """Persist a focused approval lifecycle compare-and-set update."""
 
 
 class ToolRegistryRepository(Protocol):

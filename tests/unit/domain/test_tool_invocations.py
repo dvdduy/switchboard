@@ -77,6 +77,22 @@ def test_running_invocation_can_fail_with_only_a_safe_code() -> None:
     assert failed.result is None
 
 
+def test_pending_invocation_can_pause_and_resume_dispatch() -> None:
+    paused = pending_invocation().await_confirmation()
+
+    assert paused.status is ToolInvocationStatus.AWAITING_CONFIRMATION
+    assert paused.started_at is None
+    assert paused.start(at=NOW).status is ToolInvocationStatus.RUNNING
+
+
+def test_paused_invocation_can_be_cancelled_without_starting() -> None:
+    cancelled = pending_invocation().await_confirmation().cancel(at=NOW)
+
+    assert cancelled.status is ToolInvocationStatus.CANCELLED
+    assert cancelled.started_at is None
+    assert cancelled.completed_at == NOW
+
+
 @pytest.mark.parametrize(
     ("invalid_invocation", "message"),
     [

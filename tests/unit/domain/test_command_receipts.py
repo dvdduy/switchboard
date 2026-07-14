@@ -5,11 +5,14 @@ import pytest
 
 from switchboard.domain.command_receipts import (
     CREATE_CONVERSATION_SCOPE,
+    ApprovalDecision,
     CommandOperation,
     CommandReceipt,
 )
 from switchboard.domain.errors import DomainValidationError
 from switchboard.domain.identifiers import (
+    ActorId,
+    ApprovalRequestId,
     CommandReceiptId,
     ConversationId,
     MessageId,
@@ -60,6 +63,28 @@ def test_continue_receipt_scope_is_its_result_conversation() -> None:
     )
 
     assert command_receipt.command_scope == str(conversation_id)
+
+
+def test_approval_receipt_contains_only_actor_bound_decision_result() -> None:
+    approval_id = ApprovalRequestId(uuid4())
+    actor_id = ActorId(uuid4())
+
+    command_receipt = CommandReceipt(
+        id=CommandReceiptId(uuid4()),
+        team_id=TeamId(uuid4()),
+        operation=CommandOperation.DECIDE_APPROVAL,
+        command_scope=str(approval_id),
+        idempotency_key_hash="a" * 64,
+        request_fingerprint="b" * 64,
+        created_at=NOW,
+        approval_id=approval_id,
+        actor_id=actor_id,
+        approval_decision=ApprovalDecision.APPROVE,
+    )
+
+    assert command_receipt.approval_id == approval_id
+    assert command_receipt.actor_id == actor_id
+    assert command_receipt.conversation_id is None
 
 
 @pytest.mark.parametrize(

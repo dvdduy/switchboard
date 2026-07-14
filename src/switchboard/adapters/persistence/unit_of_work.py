@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import (
 
 from switchboard.adapters.persistence.repositories import (
     SqlAlchemyAgentRepository,
+    SqlAlchemyApprovalRepository,
     SqlAlchemyCommandReceiptRepository,
     SqlAlchemyConversationRepository,
     SqlAlchemyConversationSummaryRepository,
@@ -19,6 +20,7 @@ from switchboard.adapters.persistence.repositories import (
 )
 from switchboard.application.ports.repositories import (
     AgentRepository,
+    ApprovalRepository,
     CommandReceiptRepository,
     ConversationRepository,
     ConversationSummaryRepository,
@@ -38,6 +40,7 @@ class SqlAlchemyUnitOfWork:
         self._session = session_factory()
 
         self.agents: AgentRepository = SqlAlchemyAgentRepository(self._session)
+        self.approvals: ApprovalRepository = SqlAlchemyApprovalRepository(self._session)
         self.command_receipts: CommandReceiptRepository = SqlAlchemyCommandReceiptRepository(
             self._session
         )

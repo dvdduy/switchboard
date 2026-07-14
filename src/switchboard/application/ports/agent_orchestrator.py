@@ -10,6 +10,7 @@ from switchboard.application.ports.model_gateway import (
     ModelToolResult,
 )
 from switchboard.domain.errors import DomainValidationError
+from switchboard.domain.identifiers import ApprovalRequestId, ToolInvocationId
 
 MAX_ORCHESTRATION_STEPS = 8
 
@@ -31,24 +32,48 @@ class OrchestrationRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class OrchestrationResult:
-    """Final normalized output of a bounded graph run."""
+class ToolCallAwaitingApproval:
+    """Durable pause produced instead of tool output or an exception."""
 
-    response_text: str
-    tool_called: bool
+    approval_id: ApprovalRequestId
+    invocation_id: ToolInvocationId
+    event_sequence: int
 
     def __post_init__(self) -> None:
-        if not self.response_text.strip():
-            raise DomainValidationError("response_text must not be blank")
-        if len(self.response_text) > MAX_MODEL_RESPONSE_CHARS:
-            raise DomainValidationError("orchestration response is too long")
+        if self.event_sequence <= 0:
+            raise DomainValidationError("approval event_sequence must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class OrchestrationResult:
+    """Normalized final response or durable confirmation pause."""
+
+    response_text: str | None
+    tool_called: bool
+    approval_required: ToolCallAwaitingApproval | None = None
+
+    def __post_init__(self) -> None:
+        if (self.response_text is None) == (self.approval_required is None):
+            raise DomainValidationError(
+                "orchestration requires exactly one response or approval pause"
+            )
+        if self.response_text is not None:
+            if not self.response_text.strip():
+                raise DomainValidationError("response_text must not be blank")
+            if len(self.response_text) > MAX_MODEL_RESPONSE_CHARS:
+                raise DomainValidationError("orchestration response is too long")
+        elif not self.tool_called:
+            raise DomainValidationError("approval pause requires a tool call")
 
 
 class ToolCallHandler(Protocol):
     """Durably validate and execute one model-requested tool call."""
 
-    async def execute(self, action: CallTool) -> ModelToolResult:
-        """Return normalized tool data after durable dispatch handling."""
+    async def execute(
+        self,
+        action: CallTool,
+    ) -> ModelToolResult | ToolCallAwaitingApproval:
+        """Return normalized tool data or one durable approval pause."""
 
 
 class AgentOrchestrator(Protocol):

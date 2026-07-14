@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from switchboard.adapters.api.dependencies import (
+    ApprovalApiServices,
     ConversationApiServices,
+    build_approval_api_services,
     build_conversation_api_services,
 )
 from switchboard.adapters.cache.redis_health import RedisHealthProbe
@@ -21,7 +23,10 @@ from switchboard.adapters.persistence.postgres_health import (
 from switchboard.adapters.persistence.unit_of_work import (
     SqlAlchemyUnitOfWorkFactory,
 )
+from switchboard.adapters.schema.jsonschema_validator import Draft202012JsonSchemaValidator
 from switchboard.adapters.streaming.asyncio_sleeper import AsyncioSleeper
+from switchboard.adapters.tools.reference import SearchWorkItemsAdapter, UpdateDueDateAdapter
+from switchboard.adapters.tools.resolver import StaticToolAdapterResolver
 from switchboard.application.services.readiness import ReadinessService
 from switchboard.application.services.replay_turn_events import ReplayTurnEvents
 from switchboard.bootstrap.config import Settings
@@ -38,6 +43,7 @@ class RuntimeResources:
     readiness_service: ReadinessService
     replay_turn_events: ReplayTurnEvents
     conversation_api_services: ConversationApiServices
+    approval_api_services: ApprovalApiServices
 
     async def close(self) -> None:
         """Close all runtime-owned resources."""
@@ -78,6 +84,16 @@ def build_runtime_resources(settings: Settings) -> RuntimeResources:
         sleeper=AsyncioSleeper(),
     )
     conversation_api_services = build_conversation_api_services(unit_of_work_factory)
+    approval_api_services = build_approval_api_services(
+        unit_of_work_factory,
+        adapter_resolver=StaticToolAdapterResolver(
+            {
+                "reference.search_work_items.v1": SearchWorkItemsAdapter(),
+                "reference.update_due_date.v1": UpdateDueDateAdapter(),
+            }
+        ),
+        schema_validator=Draft202012JsonSchemaValidator(),
+    )
 
     return RuntimeResources(
         database_engine=database_engine,
@@ -87,4 +103,5 @@ def build_runtime_resources(settings: Settings) -> RuntimeResources:
         readiness_service=readiness_service,
         replay_turn_events=replay_turn_events,
         conversation_api_services=conversation_api_services,
+        approval_api_services=approval_api_services,
     )

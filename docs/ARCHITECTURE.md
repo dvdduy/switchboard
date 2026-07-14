@@ -23,7 +23,7 @@ flowchart LR
 ## Target container view
 
 This diagram includes later outbox, model, tool, evaluation, and rollout
-components. The current Day 7 deployment subset is listed below.
+components. The current Day 8 deployment subset is listed below.
 
 ```mermaid
 flowchart TB
@@ -99,9 +99,9 @@ src/switchboard/
 ## Target runtime turn flow
 
 The following end-to-end outbox, worker, routing, policy, tool, and model flow is
-the target architecture; Days 3–6 implement the durable event/SSE, context,
-tool-registry control-plane, and public conversation-acceptance subsets
-described below.
+the target architecture. Through Day 8, durable events/SSE, context, registry,
+conversation acceptance, bounded orchestration, policy, and approval are
+implemented without the target outbox or automatic worker claiming.
 
 ```mermaid
 sequenceDiagram
@@ -145,15 +145,15 @@ Target architecture, not yet implemented: the API transaction will commit:
 3. initial execution event;
 4. outbox record.
 
-The future worker will claim outbox records and advance the state machine. Day 7
+The future worker will claim outbox records and advance the state machine. Day 8
 durably accepts a message, turn, pending attempt, and command receipt, but does
 not yet provide the transactional outbox, durable claiming, or recovery.
 
 ## Conversation API
 
 The implemented `/api/v1` boundary exposes create/continue commands,
-conversation metadata, exclusive-cursor message history, turn inspection, and
-the existing event stream. Pydantic transport models and stable error envelopes
+conversation metadata, exclusive-cursor message history, turn inspection,
+approval read/decision commands, and the event stream. Pydantic transport models and stable error envelopes
 are separate from domain entities and SQLAlchemy records; routes delegate to
 application services and issue no SQL.
 
@@ -164,6 +164,10 @@ versioned canonical request fingerprint, and immutable result identifiers.
 Receipt uniqueness serializes duplicate commands; the receipt and accepted
 conversation graph commit in the same unit of work. Identical replay returns
 the original result, while conflicting reuse is rejected.
+
+Approval decisions additionally require a development `X-Actor-ID`. Their
+receipts are scoped to team and approval and fingerprint actor plus decision.
+Safe approval reads expose no argument values or fingerprint digest.
 
 `202 Accepted` means the message, received turn, pending attempt, and receipt
 are durable. It does not mean execution started. No route launches background
@@ -176,27 +180,17 @@ automatic durable dispatch.
 ```mermaid
 stateDiagram-v2
     [*] --> RECEIVED
-    RECEIVED --> ROUTING
-    ROUTING --> NEEDS_CLARIFICATION
-    ROUTING --> AWAITING_CONFIRMATION
-    ROUTING --> READY
-    NEEDS_CLARIFICATION --> COMPLETED
-    AWAITING_CONFIRMATION --> READY: approved
+    RECEIVED --> RUNNING
+    RUNNING --> AWAITING_CONFIRMATION: mutation proposed
+    AWAITING_CONFIRMATION --> RUNNING: approval consumed
     AWAITING_CONFIRMATION --> CANCELLED: rejected/expired
-    READY --> EXECUTING_TOOL
-    EXECUTING_TOOL --> GENERATING_RESPONSE
-    EXECUTING_TOOL --> UNKNOWN_OUTCOME
-    EXECUTING_TOOL --> FAILED
-    UNKNOWN_OUTCOME --> GENERATING_RESPONSE: reconciled success
-    UNKNOWN_OUTCOME --> READY: reconciled safe retry
-    UNKNOWN_OUTCOME --> FAILED: terminal review
-    GENERATING_RESPONSE --> COMPLETED
+    RUNNING --> COMPLETED
+    RUNNING --> FAILED
     RECEIVED --> CANCELLED
-    ROUTING --> FAILED
-    GENERATING_RESPONSE --> FAILED
 ```
 
-Not every turn calls a tool. A direct-response path may move from routing to generation.
+This is the implemented public lifecycle. Rich routing, clarification,
+unknown-outcome, and recovery states remain target capabilities.
 
 ## Tool-routing pipeline
 
@@ -222,7 +216,12 @@ The policy engine receives a complete request context and returns one of:
 - `REQUIRE_CONFIRMATION`;
 - `REQUIRE_ELEVATED_APPROVAL`.
 
-The executor never bypasses the policy result. Approvals are separate durable records with actor, scope, expiration, and argument fingerprint.
+The pure Day 8 evaluator allows valid read-only calls, requires confirmation
+for valid mutations, and denies external-side-effect and privileged calls.
+Approvals are separate durable records linked to immutable policy evaluations
+and exact invocations. `action-v1` fingerprints team, requester, pinned
+versions, effect, environment, policy version, and canonical arguments. Public
+summaries contain argument field names but no values or digest.
 
 ## Tool execution contract
 
@@ -246,8 +245,9 @@ non-negative `Last-Event-ID`; the API treats it as an exclusive cursor, replays
 committed events in order, and then follows newly committed events.
 
 The execution services emit stable `response.delta` chunks rather than exposing
-provider token objects. Day 7 adds safe `tool.started`, `tool.completed`, and
-`tool.failed` events without arguments, results, exceptions, prompts, or private
+provider token objects. Day 8 adds `approval.required`, `approval.resolved`, and
+terminal `turn.cancelled` to the safe tool/turn event catalog. Events contain no
+arguments, results, fingerprint digest, exceptions, prompts, or private
 reasoning. A framework-independent replay service polls PostgreSQL
 with short independent units of work, never sleeps or yields with a transaction
 open, and closes after a terminal event. Redis is not required for correctness;
@@ -281,7 +281,7 @@ validates tenant ownership before reading or creating summaries.
 
 The token counter and summarizer are ports. The current local summarizer is a
 deterministic extractive simulator, not a production tokenizer or model-backed
-semantic summarizer. Day 7 passes the resulting pinned context into the explicit
+semantic summarizer. Day 8 passes the resulting pinned context into the explicit
 bounded orchestration workflow through provider-independent contracts.
 
 ## Tool registry and conformance
@@ -311,39 +311,44 @@ write persists no partial run.
 Binding an active exact tool version clones the base immutable `AgentVersion`
 and its existing bindings under the agent-definition lock. The eligible query
 returns only same-team exact bindings whose current lifecycle is `ACTIVE` and
-whose activation run passed. Day 7 additionally filters a trusted development
-scope set and permits only read-only tools, then locks and revalidates the exact
-version immediately before dispatch. Production actor authorization, live-health
-filtering, semantic routing, and approval remain downstream responsibilities.
+whose activation run passed. Day 8 filters trusted development scopes, applies
+policy, and locks/revalidates the exact version before dispatch or approval
+consumption. Production authorization, live-health filtering, and semantic
+routing remain downstream responsibilities.
 
 The current resolver contains deterministic local `search_work_items` and
 `update_due_date` examples. It is not dynamic code upload or production service
 discovery; HTTP, MCP, queue, secret, and external SaaS adapters remain future
 implementations of the same ports.
 
-## Day 7 bounded orchestration and explicit execution
+## Day 8 bounded orchestration, policy, and durable approval
 
 Application ports define normalized model actions, orchestration requests, and
 the durable tool-call callback. Only `switchboard.adapters.orchestration` imports
-LangGraph. Its ephemeral typed graph permits either a direct response or one
-read-only tool call followed by a final response; it has an explicit recursion
-limit and no framework checkpointer. The deterministic model gateway makes both
-paths testable without credentials or network access.
+LangGraph. Its ephemeral typed graph permits a direct response, one read-only
+tool call followed by a final response, or a durable approval pause. It has an
+explicit recursion limit and no framework checkpointer. The deterministic model
+gateway makes each path testable without credentials or network access.
 
 `RunTurn` is an explicit application workflow, not an HTTP background task. It
 compare-and-sets the turn and attempt to running, builds bounded context, loads
 eligible descriptors, and invokes the graph without an open database
-transaction. A requested tool first creates a durable `PENDING` invocation with
-a stable key. Under a short locked transaction, the application revalidates
-ownership, binding, lifecycle, conformance, scopes, and read-only effect, then
-commits `RUNNING` with `tool.started`. Adapter work occurs outside the
-transaction, followed by a short terminal invocation/event commit.
+transaction. Every requested tool is evaluated from trusted platform context.
+Read-only calls retain the locked dispatch path. A mutation atomically persists
+its invocation, policy evaluation, pending approval, awaiting lifecycles, and
+`approval.required`, then returns with no process or transaction waiting.
+Resume revalidates ownership, binding, lifecycle, conformance, scopes, pinned
+versions, effect, policy, expiry, and fingerprint. Approval consumption,
+resumed lifecycles, and `tool.started` commit before adapter work outside the
+transaction.
 
 Final assistant-message insertion, turn/attempt success, and `turn.completed`
 are atomic. Failure after committed progress appends one safe terminal
 `turn.failed`; tool arguments, outputs, provider exceptions, prompts, and hidden
-reasoning never enter public events. Automatic dispatch, crash recovery, real
-model providers, semantic selection, and mutating execution are deferred.
+reasoning never enter public events. Rejection/expiry cancels without dispatch.
+Automatic dispatch, post-dispatch crash recovery, real model providers,
+semantic selection, elevated approval, and external-side-effect execution are
+deferred.
 
 ## Persistence ownership
 
@@ -392,7 +397,7 @@ Only when measurement justifies it:
 No microservice split is required merely to demonstrate seniority.
 
 
-## Implementation status after Day 7
+## Implementation status after Day 8
 
 Implemented:
 
@@ -443,6 +448,12 @@ Implemented:
   transaction held across adapter execution;
 - explicit durable turn execution with pinned context, atomic terminal success,
   safe partial failure, and end-to-end SSE/history coverage.
+- immutable policy evaluations for allowed, denied, and confirmation-required
+  calls;
+- fingerprint-bound expiring approvals, safe read/decision APIs, generalized
+  receipts, awaiting/cancelled lifecycles, and approval events;
+- locked final revalidation and atomic approval consumption/dispatch start with
+  tested decision and duplicate-resume concurrency.
 
 Planned but not yet implemented:
 
@@ -453,8 +464,8 @@ Planned but not yet implemented:
 - event retention and production chunk-size tuning;
 - production tokenizers and semantic summarizers;
 - summary chaining, retention, deletion, and large-history optimization;
-- semantic tool routing, production authorization and health filtering,
-  policies, approvals, real model providers, evaluation, and rollout control;
+- semantic tool routing, production authorization and health filtering, real
+  model providers, evaluation, and rollout control;
 - automatic execution dispatch, invocation recovery/retries, and
   unknown-outcome reconciliation;
 - public registry-management APIs, production HTTP/MCP/queue adapters, and

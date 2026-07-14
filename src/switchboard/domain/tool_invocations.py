@@ -25,9 +25,11 @@ class ToolInvocationStatus(StrEnum):
     """Lifecycle of one logical installed-tool invocation."""
 
     PENDING = "pending"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,14 +87,21 @@ class ToolInvocation:
             object.__setattr__(self, "started_at", started_at)
         if completed_at is not None:
             completed_at = normalize_utc(completed_at, field_name="completed_at")
-            if started_at is None:
+            if started_at is None and self.status is not ToolInvocationStatus.CANCELLED:
                 raise DomainValidationError("completed invocation requires started_at")
             require_not_before(
                 completed_at,
-                minimum=started_at,
+                minimum=created_at,
                 field_name="completed_at",
-                minimum_field_name="started_at",
+                minimum_field_name="created_at",
             )
+            if started_at is not None:
+                require_not_before(
+                    completed_at,
+                    minimum=started_at,
+                    field_name="completed_at",
+                    minimum_field_name="started_at",
+                )
             object.__setattr__(self, "completed_at", completed_at)
 
         result = self.result
@@ -106,6 +115,11 @@ class ToolInvocation:
         if self.status is ToolInvocationStatus.PENDING:
             if any(value is not None for value in (started_at, completed_at, result, failure_code)):
                 raise DomainValidationError("pending invocation must not contain execution results")
+        elif self.status is ToolInvocationStatus.AWAITING_CONFIRMATION:
+            if any(value is not None for value in (started_at, completed_at, result, failure_code)):
+                raise DomainValidationError(
+                    "awaiting-confirmation invocation must not contain execution results"
+                )
         elif self.status is ToolInvocationStatus.RUNNING:
             if started_at is None or any(
                 value is not None for value in (completed_at, result, failure_code)
@@ -123,15 +137,30 @@ class ToolInvocation:
             started_at is None or completed_at is None or result is not None or failure_code is None
         ):
             raise DomainValidationError("failed invocation requires failure code and timestamps")
+        elif self.status is ToolInvocationStatus.CANCELLED and (
+            started_at is not None
+            or completed_at is None
+            or result is not None
+            or failure_code is not None
+        ):
+            raise DomainValidationError("cancelled invocation requires only completion timestamp")
 
     def start(self, *, at: datetime) -> "ToolInvocation":
-        if self.status is not ToolInvocationStatus.PENDING:
+        if self.status not in {
+            ToolInvocationStatus.PENDING,
+            ToolInvocationStatus.AWAITING_CONFIRMATION,
+        }:
             raise InvalidStateTransition(f"cannot start invocation from {self.status.value}")
         return replace(
             self,
             status=ToolInvocationStatus.RUNNING,
             started_at=normalize_utc(at, field_name="at"),
         )
+
+    def await_confirmation(self) -> "ToolInvocation":
+        if self.status is not ToolInvocationStatus.PENDING:
+            raise InvalidStateTransition(f"cannot await confirmation from {self.status.value}")
+        return replace(self, status=ToolInvocationStatus.AWAITING_CONFIRMATION)
 
     def succeed(self, *, at: datetime, result: JsonObject) -> "ToolInvocation":
         if self.status is not ToolInvocationStatus.RUNNING:
@@ -151,4 +180,15 @@ class ToolInvocation:
             status=ToolInvocationStatus.FAILED,
             completed_at=normalize_utc(at, field_name="at"),
             failure_code=failure_code,
+        )
+
+    def cancel(self, *, at: datetime) -> "ToolInvocation":
+        """Cancel an invocation that never crossed the dispatch boundary."""
+
+        if self.status is not ToolInvocationStatus.AWAITING_CONFIRMATION:
+            raise InvalidStateTransition(f"cannot cancel invocation from {self.status.value}")
+        return replace(
+            self,
+            status=ToolInvocationStatus.CANCELLED,
+            completed_at=normalize_utc(at, field_name="at"),
         )

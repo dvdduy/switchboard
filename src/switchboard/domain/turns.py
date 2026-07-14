@@ -28,6 +28,7 @@ class TurnStatus(StrEnum):
 
     RECEIVED = "received"
     RUNNING = "running"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -38,8 +39,10 @@ class TurnAttemptStatus(StrEnum):
 
     PENDING = "pending"
     RUNNING = "running"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 _TURN_TERMINAL_STATUSES = frozenset(
@@ -55,6 +58,7 @@ _ATTEMPT_TERMINAL_STATUSES = frozenset(
     {
         TurnAttemptStatus.SUCCEEDED,
         TurnAttemptStatus.FAILED,
+        TurnAttemptStatus.CANCELLED,
     }
 )
 
@@ -148,12 +152,27 @@ class Turn:
             completed_at=normalize_utc(at, field_name="at"),
         )
 
+    def await_confirmation(self) -> "Turn":
+        """Pause a running turn without making it terminal."""
+
+        if self.status is not TurnStatus.RUNNING:
+            raise InvalidStateTransition(f"cannot await confirmation from {self.status.value}")
+        return replace(self, status=TurnStatus.AWAITING_CONFIRMATION)
+
+    def resume(self) -> "Turn":
+        """Resume a durably paused turn after approval consumption."""
+
+        if self.status is not TurnStatus.AWAITING_CONFIRMATION:
+            raise InvalidStateTransition(f"cannot resume a turn from {self.status.value}")
+        return replace(self, status=TurnStatus.RUNNING)
+
     def fail(self, *, at: datetime) -> "Turn":
         """Fail a received or running turn."""
 
         if self.status not in {
             TurnStatus.RECEIVED,
             TurnStatus.RUNNING,
+            TurnStatus.AWAITING_CONFIRMATION,
         }:
             raise InvalidStateTransition(f"cannot fail a turn from {self.status.value}")
 
@@ -169,6 +188,7 @@ class Turn:
         if self.status not in {
             TurnStatus.RECEIVED,
             TurnStatus.RUNNING,
+            TurnStatus.AWAITING_CONFIRMATION,
         }:
             raise InvalidStateTransition(f"cannot cancel a turn from {self.status.value}")
 
@@ -252,7 +272,10 @@ class TurnAttempt:
             ):
                 raise DomainValidationError("pending attempt must not contain execution results")
 
-        elif self.status is TurnAttemptStatus.RUNNING:
+        elif self.status in {
+            TurnAttemptStatus.RUNNING,
+            TurnAttemptStatus.AWAITING_CONFIRMATION,
+        }:
             if started_at is None or completed_at is not None:
                 raise DomainValidationError("running attempt requires started_at only")
 
@@ -266,21 +289,22 @@ class TurnAttempt:
             if self.failure_code is not None:
                 raise DomainValidationError("succeeded attempt must not have failure_code")
 
-        elif self.status is TurnAttemptStatus.FAILED:
+        elif self.status in {TurnAttemptStatus.FAILED, TurnAttemptStatus.CANCELLED}:
             if started_at is None or completed_at is None:
                 raise DomainValidationError("failed attempt requires start and completion times")
 
-            if self.failure_code is None:
+            if self.status is TurnAttemptStatus.FAILED and self.failure_code is None:
                 raise DomainValidationError("failed attempt requires failure_code")
 
-            object.__setattr__(
-                self,
-                "failure_code",
-                require_not_blank(
-                    self.failure_code,
-                    field_name="failure_code",
-                ),
-            )
+            if self.status is TurnAttemptStatus.CANCELLED and self.failure_code is not None:
+                raise DomainValidationError("cancelled attempt must not have failure_code")
+
+            if self.failure_code is not None:
+                object.__setattr__(
+                    self,
+                    "failure_code",
+                    require_not_blank(self.failure_code, field_name="failure_code"),
+                )
 
         if self.status in _ATTEMPT_TERMINAL_STATUSES and completed_at is None:
             raise DomainValidationError("terminal attempt requires completed_at")
@@ -307,6 +331,38 @@ class TurnAttempt:
             self,
             status=TurnAttemptStatus.SUCCEEDED,
             completed_at=normalize_utc(at, field_name="at"),
+        )
+
+    def await_confirmation(self) -> "TurnAttempt":
+        """Pause a running attempt without completing it."""
+
+        if self.status is not TurnAttemptStatus.RUNNING:
+            raise InvalidStateTransition(f"cannot await confirmation from {self.status.value}")
+        return replace(self, status=TurnAttemptStatus.AWAITING_CONFIRMATION)
+
+    def resume(self) -> "TurnAttempt":
+        """Resume a durably paused physical attempt."""
+
+        if self.status is not TurnAttemptStatus.AWAITING_CONFIRMATION:
+            raise InvalidStateTransition(f"cannot resume an attempt from {self.status.value}")
+        return replace(self, status=TurnAttemptStatus.RUNNING)
+
+    def cancel(self, *, at: datetime) -> "TurnAttempt":
+        """Cancel a pending, running, or paused attempt."""
+
+        if self.status not in {
+            TurnAttemptStatus.PENDING,
+            TurnAttemptStatus.RUNNING,
+            TurnAttemptStatus.AWAITING_CONFIRMATION,
+        }:
+            raise InvalidStateTransition(f"cannot cancel attempt from {self.status.value}")
+        cancelled_at = normalize_utc(at, field_name="at")
+        return replace(
+            self,
+            status=TurnAttemptStatus.CANCELLED,
+            started_at=self.started_at or cancelled_at,
+            completed_at=cancelled_at,
+            failure_code=None,
         )
 
     def fail(

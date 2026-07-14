@@ -6,7 +6,16 @@ from typing import Protocol, cast
 from uuid import UUID
 
 from switchboard.domain.agents import AgentDefinition, AgentVersion
-from switchboard.domain.command_receipts import CommandOperation, CommandReceipt
+from switchboard.domain.approvals import (
+    ApprovalRequest,
+    ApprovalStatus,
+    PolicyEvaluationRecord,
+)
+from switchboard.domain.command_receipts import (
+    ApprovalDecision,
+    CommandOperation,
+    CommandReceipt,
+)
 from switchboard.domain.context import ContextPolicy, ConversationSummary
 from switchboard.domain.conversations import (
     Conversation,
@@ -19,14 +28,17 @@ from switchboard.domain.execution_events import (
     ExecutionEventKind,
 )
 from switchboard.domain.identifiers import (
+    ActorId,
     AgentDefinitionId,
     AgentToolBindingId,
     AgentVersionId,
+    ApprovalRequestId,
     CommandReceiptId,
     ConversationId,
     ConversationSummaryId,
     ExecutionEventId,
     MessageId,
+    PolicyEvaluationId,
     TeamId,
     ToolConformanceCaseResultId,
     ToolConformanceRunId,
@@ -37,6 +49,14 @@ from switchboard.domain.identifiers import (
     TurnId,
 )
 from switchboard.domain.json_values import mutable_json_value
+from switchboard.domain.policy import (
+    ActionFingerprint,
+    PolicyDecision,
+    PolicyEnvironment,
+    PolicyEvaluation,
+    PolicyReasonCode,
+    SafeActionSummary,
+)
 from switchboard.domain.tool_invocations import (
     ToolInvocation,
     ToolInvocationStatus,
@@ -229,6 +249,11 @@ def command_receipt_to_record(receipt: CommandReceipt) -> dict[str, object]:
         "message_id": receipt.message_id,
         "turn_id": receipt.turn_id,
         "attempt_id": receipt.attempt_id,
+        "approval_id": receipt.approval_id,
+        "actor_id": receipt.actor_id,
+        "approval_decision": (
+            None if receipt.approval_decision is None else receipt.approval_decision.value
+        ),
         "created_at": receipt.created_at,
     }
 
@@ -241,10 +266,31 @@ def command_receipt_from_record(record: Record) -> CommandReceipt:
         command_scope=cast(str, record["command_scope"]),
         idempotency_key_hash=cast(str, record["idempotency_key_hash"]),
         request_fingerprint=cast(str, record["request_fingerprint"]),
-        conversation_id=ConversationId(cast(UUID, record["conversation_id"])),
-        message_id=MessageId(cast(UUID, record["message_id"])),
-        turn_id=TurnId(cast(UUID, record["turn_id"])),
-        attempt_id=TurnAttemptId(cast(UUID, record["attempt_id"])),
+        conversation_id=(
+            None
+            if record["conversation_id"] is None
+            else ConversationId(cast(UUID, record["conversation_id"]))
+        ),
+        message_id=(
+            None if record["message_id"] is None else MessageId(cast(UUID, record["message_id"]))
+        ),
+        turn_id=None if record["turn_id"] is None else TurnId(cast(UUID, record["turn_id"])),
+        attempt_id=(
+            None
+            if record["attempt_id"] is None
+            else TurnAttemptId(cast(UUID, record["attempt_id"]))
+        ),
+        approval_id=(
+            None
+            if record["approval_id"] is None
+            else ApprovalRequestId(cast(UUID, record["approval_id"]))
+        ),
+        actor_id=(None if record["actor_id"] is None else ActorId(cast(UUID, record["actor_id"]))),
+        approval_decision=(
+            None
+            if record["approval_decision"] is None
+            else ApprovalDecision(cast(str, record["approval_decision"]))
+        ),
         created_at=cast(datetime, record["created_at"]),
     )
 
@@ -515,6 +561,112 @@ def tool_invocation_from_record(record: Record) -> ToolInvocation:
         completed_at=cast(datetime | None, record["completed_at"]),
         result=None if result is None else cast(Mapping[str, object], result),
         failure_code=cast(str | None, record["failure_code"]),
+    )
+
+
+def policy_evaluation_to_record(evaluation: PolicyEvaluationRecord) -> dict[str, object]:
+    return {
+        "id": evaluation.id,
+        "team_id": evaluation.team_id,
+        "requester_actor_id": evaluation.requester_actor_id,
+        "agent_version_id": evaluation.agent_version_id,
+        "turn_id": evaluation.turn_id,
+        "attempt_id": evaluation.attempt_id,
+        "invocation_id": evaluation.invocation_id,
+        "tool_definition_id": evaluation.tool_definition_id,
+        "tool_version_id": evaluation.tool_version_id,
+        "effect": evaluation.effect.value,
+        "environment": evaluation.environment.value,
+        "required_scopes": list(evaluation.required_scopes),
+        "granted_scopes": list(evaluation.granted_scopes),
+        "policy_version": evaluation.evaluation.policy_version,
+        "decision": evaluation.evaluation.decision.value,
+        "reason_code": evaluation.evaluation.reason_code.value,
+        "fingerprint_version": evaluation.fingerprint.version,
+        "fingerprint_digest": evaluation.fingerprint.digest,
+        "evaluated_at": evaluation.evaluated_at,
+    }
+
+
+def policy_evaluation_from_record(record: Record) -> PolicyEvaluationRecord:
+    invocation_id = record["invocation_id"]
+    return PolicyEvaluationRecord(
+        id=PolicyEvaluationId(cast(UUID, record["id"])),
+        team_id=TeamId(cast(UUID, record["team_id"])),
+        requester_actor_id=ActorId(cast(UUID, record["requester_actor_id"])),
+        agent_version_id=AgentVersionId(cast(UUID, record["agent_version_id"])),
+        turn_id=TurnId(cast(UUID, record["turn_id"])),
+        attempt_id=TurnAttemptId(cast(UUID, record["attempt_id"])),
+        invocation_id=(
+            None if invocation_id is None else ToolInvocationId(cast(UUID, invocation_id))
+        ),
+        tool_definition_id=ToolDefinitionId(cast(UUID, record["tool_definition_id"])),
+        tool_version_id=ToolVersionId(cast(UUID, record["tool_version_id"])),
+        effect=ToolEffect(cast(str, record["effect"])),
+        environment=PolicyEnvironment(cast(str, record["environment"])),
+        required_scopes=tuple(cast(list[str], record["required_scopes"])),
+        granted_scopes=tuple(cast(list[str], record["granted_scopes"])),
+        evaluation=PolicyEvaluation(
+            policy_version=cast(str, record["policy_version"]),
+            decision=PolicyDecision(cast(str, record["decision"])),
+            reason_code=PolicyReasonCode(cast(str, record["reason_code"])),
+        ),
+        fingerprint=ActionFingerprint(
+            version=cast(str, record["fingerprint_version"]),
+            digest=cast(str, record["fingerprint_digest"]),
+        ),
+        evaluated_at=cast(datetime, record["evaluated_at"]),
+    )
+
+
+def approval_request_to_record(approval: ApprovalRequest) -> dict[str, object]:
+    return {
+        "id": approval.id,
+        "team_id": approval.team_id,
+        "policy_evaluation_id": approval.policy_evaluation_id,
+        "invocation_id": approval.invocation_id,
+        "requester_actor_id": approval.requester_actor_id,
+        "fingerprint_version": approval.fingerprint.version,
+        "fingerprint_digest": approval.fingerprint.digest,
+        "tool_definition_id": approval.safe_summary.tool_definition_id,
+        "tool_version_id": approval.safe_summary.tool_version_id,
+        "effect": approval.safe_summary.effect.value,
+        "argument_fields": list(approval.safe_summary.argument_fields),
+        "status": approval.status.value,
+        "created_at": approval.created_at,
+        "expires_at": approval.expires_at,
+        "resolved_by_actor_id": approval.resolved_by_actor_id,
+        "resolved_at": approval.resolved_at,
+        "consumed_at": approval.consumed_at,
+    }
+
+
+def approval_request_from_record(record: Record) -> ApprovalRequest:
+    resolved_actor_id = record["resolved_by_actor_id"]
+    return ApprovalRequest(
+        id=ApprovalRequestId(cast(UUID, record["id"])),
+        team_id=TeamId(cast(UUID, record["team_id"])),
+        policy_evaluation_id=PolicyEvaluationId(cast(UUID, record["policy_evaluation_id"])),
+        invocation_id=ToolInvocationId(cast(UUID, record["invocation_id"])),
+        requester_actor_id=ActorId(cast(UUID, record["requester_actor_id"])),
+        fingerprint=ActionFingerprint(
+            version=cast(str, record["fingerprint_version"]),
+            digest=cast(str, record["fingerprint_digest"]),
+        ),
+        safe_summary=SafeActionSummary(
+            tool_definition_id=ToolDefinitionId(cast(UUID, record["tool_definition_id"])),
+            tool_version_id=ToolVersionId(cast(UUID, record["tool_version_id"])),
+            effect=ToolEffect(cast(str, record["effect"])),
+            argument_fields=tuple(cast(list[str], record["argument_fields"])),
+        ),
+        status=ApprovalStatus(cast(str, record["status"])),
+        created_at=cast(datetime, record["created_at"]),
+        expires_at=cast(datetime, record["expires_at"]),
+        resolved_by_actor_id=(
+            None if resolved_actor_id is None else ActorId(cast(UUID, resolved_actor_id))
+        ),
+        resolved_at=cast(datetime | None, record["resolved_at"]),
+        consumed_at=cast(datetime | None, record["consumed_at"]),
     )
 
 

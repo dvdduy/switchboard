@@ -2,7 +2,7 @@
 ### A Chat & Agent Platform — Tool Routing, Evaluation, and Shared Infrastructure — reverse-engineered from Asana's Vancouver Chat Platform posting
 
 **Trigger phrase:** `Switchboard, Day N, let's go.`
-**Status:** Active — Day 2 complete; Day 3 planned.
+**Status:** Active — Day 8 complete; Day 9 planned.
 **Track target:** Asana — Senior Software Engineer, Chat Platform (Vancouver)
 
 ---
@@ -156,10 +156,14 @@ Commit: an agent correctly calls a registered tool and incorporates the result i
 Earn: first end-to-end agent behavior, not just scaffolding.
 
 **Day 8 — Guardrails**
-Learn: nothing new — applying the portfolio-wide confirmation-gate pattern here.
-Build: read-only-by-default tool execution; a confirmation gate for any mutating tool call.
-Commit: a mutating tool call is inert without confirmation and executes correctly with it.
-Earn: a fifth track sharing the identical guardrail philosophy — deep cross-portfolio consistency.
+Learn: authorization, policy, confirmation, and execution are separate durable
+facts; approval must bind the exact action fingerprint and survive races.
+Build: pure policy evaluation, immutable audit, expiring fingerprint-bound
+approval, safe public decisions, and atomic resume/cancellation events.
+Commit: a mutating tool call remains inert before approval and crosses the
+logical dispatch boundary once in tested concurrent flows.
+Earn: explain why durable confirmation is a platform state machine rather than
+a prompt instruction or in-memory graph pause.
 
 **Day 9 — Multi-tool orchestration**
 Learn: state handling across multi-step tool sequences.
