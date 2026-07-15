@@ -38,8 +38,11 @@ bounded, reviewable implementation sessions.
 | 1–3 | Complete | Implemented and reconciled with actual delivery |
 | 4–6 | Planned | Detailed checkpoint and acceptance-level plans |
 | 7–9 | Planned | Detailed capability plans with provisional low-level design |
-| 10 | Planned | Phase integration, hardening, evidence, and release checkpoint |
-| 11–20 | Roadmap | Create capability-level plans after Phase 1 is stable |
+| 10 | Planned | Phase 1 integration, hardening, evidence, and release checkpoint |
+| 11 | Planned | Detailed architecture/design gate before routing implementation |
+| 12–18 | Planned | Capability-level Phase 2 plans; refine low-level choices before implementation |
+| 19 | Planned | Product-to-platform design document and self-service onboarding review |
+| 20 | Planned | Phase 2 integration, hardening, evidence, and release checkpoint |
 | 21–30 | Roadmap | Keep directional until the evaluation architecture is closer |
 
 ## Navigation
@@ -56,6 +59,19 @@ bounded, reviewable implementation sessions.
 - [Day 8 — Policy Guardrails and Durable Approval](DAY_08.md)
 - [Day 9 — Durable Multi-Tool Pause and Resume](DAY_09.md)
 - [Day 10 — Phase 1 Integration and v0.1 Platform Checkpoint](DAY_10.md)
+
+### Phase 2 — Tool Selection, Observability, and Rollout Safety
+
+- [Day 11 — Tool-Selection Architecture Decision](DAY_11.md)
+- [Day 12 — Hybrid Semantic Tool Routing](DAY_12.md)
+- [Day 13 — Routing Evaluation Harness](DAY_13.md)
+- [Day 14 — Structured Turn Tracing](DAY_14.md)
+- [Day 15 — Safe Replay and Debugging Experience](DAY_15.md)
+- [Day 16 — Latency Attribution and Tool Availability](DAY_16.md)
+- [Day 17 — Staged Rollout and Automatic Rollback](DAY_17.md)
+- [Day 18 — Durable Dispatch and Failure Recovery](DAY_18.md)
+- [Day 19 — Self-Service Tool Onboarding Design](DAY_19.md)
+- [Day 20 — Phase 2 Integration and v0.2 Routing Checkpoint](DAY_20.md)
 
 ## Codex usage
 
