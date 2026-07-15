@@ -575,7 +575,12 @@ command_receipts = Table(
     Column(
         "approval_id",
         Uuid(as_uuid=True),
-        ForeignKey("approval_requests.id", ondelete="RESTRICT"),
+        ForeignKey(
+            "workflow_plan_approvals.id",
+            name="fk_turn_workflows_approval_id_workflow_plan_approvals",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
         nullable=True,
     ),
     Column("actor_id", Uuid(as_uuid=True), nullable=True),
@@ -709,6 +714,9 @@ execution_events = Table(
             'tool.started',
             'tool.completed',
             'tool.failed',
+            'workflow.planned',
+            'workflow.resumed',
+            'workflow.terminal',
             'response.delta',
             'turn.completed',
             'turn.failed',
@@ -789,9 +797,14 @@ tool_invocations = Table(
         name="tool_invocation_tool_version",
         ondelete="RESTRICT",
     ),
-    UniqueConstraint("attempt_id", name="attempt_tool_invocation"),
     UniqueConstraint("turn_id", "invocation_number", name="turn_invocation_number"),
     UniqueConstraint("idempotency_key", name="tool_invocation_idempotency_key"),
+    UniqueConstraint(
+        "id",
+        "turn_id",
+        "attempt_id",
+        name="tool_invocation_workflow_identity",
+    ),
     UniqueConstraint(
         "id",
         "turn_id",
@@ -800,7 +813,7 @@ tool_invocations = Table(
         "tool_version_id",
         name="tool_invocation_policy_identity",
     ),
-    CheckConstraint("invocation_number = 1", name="invocation_number_day_7"),
+    CheckConstraint("invocation_number > 0", name="invocation_number_positive"),
     CheckConstraint("jsonb_typeof(arguments) = 'object'", name="arguments_is_object"),
     CheckConstraint(
         "idempotency_key ~ '^[A-Za-z0-9._:-]{1,200}$'",
@@ -814,7 +827,7 @@ tool_invocations = Table(
     CheckConstraint(
         (
             "status IN ('pending', 'awaiting_confirmation', 'running', "
-            "'succeeded', 'failed', 'cancelled')"
+            "'succeeded', 'failed', 'unknown', 'cancelled')"
         ),
         name="status_valid",
     ),
@@ -850,7 +863,7 @@ tool_invocations = Table(
             AND failure_code IS NULL
         )
         OR (
-            status = 'failed'
+            status IN ('failed', 'unknown')
             AND started_at IS NOT NULL
             AND completed_at IS NOT NULL
             AND result IS NULL
@@ -1104,6 +1117,282 @@ approval_requests = Table(
         unique=True,
         postgresql_where=text("status IN ('pending', 'approved')"),
     ),
+)
+
+
+turn_workflows = Table(
+    "turn_workflows",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column("turn_id", Uuid(as_uuid=True), nullable=False),
+    Column("attempt_id", Uuid(as_uuid=True), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("plan_version", Integer, nullable=False),
+    Column("plan_fingerprint_version", String(32), nullable=True),
+    Column("plan_fingerprint_digest", String(64), nullable=True),
+    Column(
+        "approval_id",
+        Uuid(as_uuid=True),
+        ForeignKey("approval_requests.id", ondelete="RESTRICT"),
+        nullable=True,
+    ),
+    Column(
+        "output_message_id",
+        Uuid(as_uuid=True),
+        ForeignKey("messages.id", ondelete="RESTRICT"),
+        nullable=True,
+    ),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    ForeignKeyConstraint(
+        ["turn_id", "attempt_id"],
+        ["turn_attempts.turn_id", "turn_attempts.id"],
+        name="workflow_attempt",
+        ondelete="RESTRICT",
+    ),
+    UniqueConstraint("turn_id", name="turn_workflow"),
+    UniqueConstraint("approval_id", name="workflow_approval"),
+    UniqueConstraint("output_message_id", name="workflow_output_message"),
+    UniqueConstraint("id", "turn_id", "attempt_id", name="workflow_execution_identity"),
+    CheckConstraint("plan_version = 1", name="plan_version_day_9"),
+    CheckConstraint(
+        "(plan_fingerprint_version IS NULL) = (plan_fingerprint_digest IS NULL)",
+        name="plan_fingerprint_complete",
+    ),
+    CheckConstraint(
+        "plan_fingerprint_version IS NULL OR plan_fingerprint_version = 'workflow-plan-v1'",
+        name="plan_fingerprint_version_valid",
+    ),
+    CheckConstraint(
+        "plan_fingerprint_digest IS NULL OR plan_fingerprint_digest ~ '^[0-9a-f]{64}$'",
+        name="plan_fingerprint_digest_valid",
+    ),
+    CheckConstraint(
+        "status IN ('discovery_pending', 'discovery_running', 'discovery_failed', 'planning', "
+        "'awaiting_confirmation', 'running', 'completing', 'completed', "
+        "'failed', 'review_required', 'cancelled')",
+        name="status_valid",
+    ),
+    CheckConstraint(
+        """
+        (
+            status IN ('discovery_pending', 'discovery_running', 'planning')
+            AND plan_fingerprint_version IS NULL
+            AND plan_fingerprint_digest IS NULL
+            AND approval_id IS NULL
+            AND output_message_id IS NULL
+            AND completed_at IS NULL
+        )
+        OR (
+            status = 'discovery_failed'
+            AND plan_fingerprint_version IS NULL
+            AND plan_fingerprint_digest IS NULL
+            AND approval_id IS NULL
+            AND output_message_id IS NULL
+            AND completed_at IS NOT NULL
+        )
+        OR (
+            status IN ('awaiting_confirmation', 'running')
+            AND plan_fingerprint_version IS NOT NULL
+            AND plan_fingerprint_digest IS NOT NULL
+            AND approval_id IS NOT NULL
+            AND output_message_id IS NULL
+            AND completed_at IS NULL
+        )
+        OR (
+            status = 'completing'
+            AND plan_fingerprint_version IS NOT NULL
+            AND plan_fingerprint_digest IS NOT NULL
+            AND output_message_id IS NULL
+            AND completed_at IS NULL
+        )
+        OR (
+            status IN ('completed', 'failed', 'review_required')
+            AND plan_fingerprint_version IS NOT NULL
+            AND plan_fingerprint_digest IS NOT NULL
+            AND output_message_id IS NOT NULL
+            AND completed_at IS NOT NULL
+        )
+        OR (
+            status = 'cancelled'
+            AND plan_fingerprint_version IS NOT NULL
+            AND plan_fingerprint_digest IS NOT NULL
+            AND approval_id IS NOT NULL
+            AND output_message_id IS NULL
+            AND completed_at IS NOT NULL
+        )
+        """,
+        name="lifecycle_fields_match_status",
+    ),
+    CheckConstraint("updated_at >= created_at", name="updated_at_not_before_created_at"),
+    CheckConstraint(
+        "completed_at IS NULL OR completed_at >= updated_at",
+        name="completed_at_not_before_updated_at",
+    ),
+    Index("ix_turn_workflows_status", "status"),
+)
+
+
+workflow_plan_approvals = Table(
+    "workflow_plan_approvals",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column(
+        "workflow_id",
+        Uuid(as_uuid=True),
+        ForeignKey("turn_workflows.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("team_id", Uuid(as_uuid=True), nullable=False),
+    Column("requester_actor_id", Uuid(as_uuid=True), nullable=False),
+    Column("fingerprint_version", String(32), nullable=False),
+    Column("fingerprint_digest", String(64), nullable=False),
+    Column("safe_actions", JSONB, nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("resolved_by_actor_id", Uuid(as_uuid=True), nullable=True),
+    Column("resolved_at", DateTime(timezone=True), nullable=True),
+    Column("consumed_at", DateTime(timezone=True), nullable=True),
+    UniqueConstraint("workflow_id", name="workflow_plan_approval_workflow"),
+    CheckConstraint(
+        "fingerprint_version = 'workflow-plan-v1'",
+        name="fingerprint_version_supported",
+    ),
+    CheckConstraint(
+        "fingerprint_digest ~ '^[0-9a-f]{64}$'",
+        name="fingerprint_digest_valid",
+    ),
+    CheckConstraint(
+        "jsonb_typeof(safe_actions) = 'array' AND jsonb_array_length(safe_actions) > 0",
+        name="safe_actions_nonempty_array",
+    ),
+    CheckConstraint(
+        "status IN ('pending', 'approved', 'rejected', 'expired', 'consumed')",
+        name="status_valid",
+    ),
+    CheckConstraint("expires_at > created_at", name="expiry_after_creation"),
+    CheckConstraint(
+        """
+        (status = 'pending' AND resolved_by_actor_id IS NULL
+            AND resolved_at IS NULL AND consumed_at IS NULL)
+        OR (status IN ('approved', 'rejected') AND resolved_by_actor_id IS NOT NULL
+            AND resolved_at IS NOT NULL AND resolved_at < expires_at
+            AND consumed_at IS NULL)
+        OR (status = 'expired' AND resolved_by_actor_id IS NULL
+            AND resolved_at IS NOT NULL AND resolved_at >= expires_at
+            AND consumed_at IS NULL)
+        OR (status = 'consumed' AND resolved_by_actor_id IS NOT NULL
+            AND resolved_at IS NOT NULL AND consumed_at IS NOT NULL
+            AND resolved_at < expires_at AND consumed_at >= resolved_at
+            AND consumed_at < expires_at)
+        """,
+        name="lifecycle_fields_match_status",
+    ),
+    Index("ix_workflow_plan_approvals_team_status_expiry", "team_id", "status", "expires_at"),
+)
+
+
+workflow_steps = Table(
+    "workflow_steps",
+    metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True, nullable=False),
+    Column("workflow_id", Uuid(as_uuid=True), nullable=False),
+    Column("turn_id", Uuid(as_uuid=True), nullable=False),
+    Column("attempt_id", Uuid(as_uuid=True), nullable=False),
+    Column("step_number", Integer, nullable=False),
+    Column("kind", String(32), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("predecessor_step_id", Uuid(as_uuid=True), nullable=True),
+    Column("predecessor_step_number", Integer, nullable=True),
+    Column("invocation_id", Uuid(as_uuid=True), nullable=True),
+    Column(
+        "output_message_id",
+        Uuid(as_uuid=True),
+        ForeignKey("messages.id", ondelete="RESTRICT"),
+        nullable=True,
+    ),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=True),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("failure_code", String(100), nullable=True),
+    ForeignKeyConstraint(
+        ["workflow_id", "turn_id", "attempt_id"],
+        ["turn_workflows.id", "turn_workflows.turn_id", "turn_workflows.attempt_id"],
+        name="workflow_step_execution",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["invocation_id", "turn_id", "attempt_id"],
+        ["tool_invocations.id", "tool_invocations.turn_id", "tool_invocations.attempt_id"],
+        name="workflow_step_invocation",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["workflow_id", "predecessor_step_number", "predecessor_step_id"],
+        ["workflow_steps.workflow_id", "workflow_steps.step_number", "workflow_steps.id"],
+        name="workflow_step_predecessor",
+        ondelete="RESTRICT",
+    ),
+    UniqueConstraint("workflow_id", "step_number", name="workflow_step_number"),
+    UniqueConstraint("workflow_id", "step_number", "id", name="workflow_step_identity"),
+    UniqueConstraint("invocation_id", name="workflow_step_invocation_identity"),
+    UniqueConstraint("output_message_id", name="workflow_step_output_message"),
+    CheckConstraint("step_number > 0", name="step_number_positive"),
+    CheckConstraint(
+        """
+        (step_number = 1 AND predecessor_step_id IS NULL
+            AND predecessor_step_number IS NULL)
+        OR (step_number > 1 AND predecessor_step_id IS NOT NULL
+            AND predecessor_step_number = step_number - 1)
+        """,
+        name="immediate_predecessor",
+    ),
+    CheckConstraint(
+        "kind IN ('discovery_tool', 'mutation_tool', 'final_response')",
+        name="kind_valid",
+    ),
+    CheckConstraint(
+        "(kind IN ('discovery_tool', 'mutation_tool') AND invocation_id IS NOT NULL "
+        "AND output_message_id IS NULL) "
+        "OR (kind = 'final_response' AND invocation_id IS NULL)",
+        name="references_match_kind",
+    ),
+    CheckConstraint(
+        "status IN ('pending', 'running', 'succeeded', 'failed', 'unknown', 'skipped')",
+        name="status_valid",
+    ),
+    CheckConstraint(
+        "failure_code IS NULL OR failure_code ~ '^[a-z][a-z0-9._-]{0,99}$'",
+        name="failure_code_valid",
+    ),
+    CheckConstraint(
+        """
+        (status = 'pending' AND started_at IS NULL AND completed_at IS NULL
+            AND output_message_id IS NULL AND failure_code IS NULL)
+        OR (status = 'running' AND started_at IS NOT NULL AND completed_at IS NULL
+            AND output_message_id IS NULL AND failure_code IS NULL)
+        OR (status = 'succeeded' AND started_at IS NOT NULL AND completed_at IS NOT NULL
+            AND failure_code IS NULL
+            AND (kind <> 'final_response' OR output_message_id IS NOT NULL))
+        OR (status IN ('failed', 'unknown') AND started_at IS NOT NULL
+            AND completed_at IS NOT NULL AND output_message_id IS NULL
+            AND failure_code IS NOT NULL)
+        OR (status = 'skipped' AND started_at IS NULL AND completed_at IS NOT NULL
+            AND output_message_id IS NULL AND failure_code IS NOT NULL)
+        """,
+        name="lifecycle_fields_match_status",
+    ),
+    CheckConstraint(
+        "started_at IS NULL OR started_at >= created_at",
+        name="started_at_not_before_created_at",
+    ),
+    CheckConstraint(
+        "completed_at IS NULL OR completed_at >= COALESCE(started_at, created_at)",
+        name="completed_at_not_before_start",
+    ),
+    Index("ix_workflow_steps_workflow_status", "workflow_id", "status"),
 )
 
 

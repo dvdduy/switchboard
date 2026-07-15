@@ -29,6 +29,7 @@ class ToolInvocationStatus(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    UNKNOWN = "unknown"
     CANCELLED = "cancelled"
 
 
@@ -54,8 +55,6 @@ class ToolInvocation:
 
     def __post_init__(self) -> None:
         require_positive(self.invocation_number, field_name="invocation_number")
-        if self.invocation_number != 1:
-            raise DomainValidationError("Day 7 supports exactly one invocation per attempt")
 
         if not _KEY_PATTERN.fullmatch(self.idempotency_key):
             raise DomainValidationError("idempotency_key is invalid")
@@ -133,7 +132,7 @@ class ToolInvocation:
                 or failure_code is not None
             ):
                 raise DomainValidationError("succeeded invocation requires result and timestamps")
-        elif self.status is ToolInvocationStatus.FAILED and (
+        elif self.status in {ToolInvocationStatus.FAILED, ToolInvocationStatus.UNKNOWN} and (
             started_at is None or completed_at is None or result is not None or failure_code is None
         ):
             raise DomainValidationError("failed invocation requires failure code and timestamps")
@@ -178,6 +177,16 @@ class ToolInvocation:
         return replace(
             self,
             status=ToolInvocationStatus.FAILED,
+            completed_at=normalize_utc(at, field_name="at"),
+            failure_code=failure_code,
+        )
+
+    def mark_unknown(self, *, at: datetime, failure_code: str) -> "ToolInvocation":
+        if self.status is not ToolInvocationStatus.RUNNING:
+            raise InvalidStateTransition(f"cannot mark invocation unknown from {self.status.value}")
+        return replace(
+            self,
+            status=ToolInvocationStatus.UNKNOWN,
             completed_at=normalize_utc(at, field_name="at"),
             failure_code=failure_code,
         )

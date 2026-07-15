@@ -41,7 +41,7 @@ The current implementation does not yet substantiate the accepted-turn loss or
 canary objectives in production terms: API acceptance is durable, but automatic
 dispatch and recovery require a transactional outbox and worker claiming.
 
-## Day 8 API, explicit execution, and approval operations
+## Day 9 API, explicit execution, approval, and workflow operations
 
 - Apply migrations with `uv run alembic upgrade head` before starting the API.
 - Supply `X-Team-ID` on all conversation, turn, history, and event requests.
@@ -62,7 +62,7 @@ dispatch and recovery require a transactional outbox and worker claiming.
 - Message history is bounded to 100 items per request and advances with the
   exclusive `after_sequence` cursor.
 - Redis is not required for API command correctness or event replay.
-- Day 8 execution is invoked only through the application-level `RunTurn`
+- Direct/single-tool execution is invoked through application-level `RunTurn`
   workflow by a trusted development runner/test with team, actor, and granted scopes;
   there is no public execution endpoint or automatic worker claim.
 - The bounded workflow emits a direct response, one read-only tool lifecycle, or
@@ -76,6 +76,17 @@ dispatch and recovery require a transactional outbox and worker claiming.
   provider exceptions, prompts, and private reasoning are excluded.
 - A failed tool commits `tool.failed` before the turn closes with one
   `turn.failed`; completed invocation progress remains durable.
+- The Day 9 reference workflow is advanced explicitly through
+  `RunWorkflowDiscovery`, `FreezeWorkflowMutationPlan`, and
+  `RunApprovedWorkflow`; these are application workflows, not public endpoints
+  or automatic worker jobs.
+- `workflow.planned`, `workflow.resumed`, and `workflow.terminal` are safe
+  progress observations. Only terminal turn events close SSE replay.
+- A recreated runner resumes from PostgreSQL and skips committed terminal steps.
+  Operators must not reset a persisted running mutation to pending: explicit
+  recovery conservatively marks its outcome unknown and stops later dispatch.
+- `REVIEW_REQUIRED` means external outcome reconciliation or human review is
+  needed. Day 9 provides durable evidence but no reconciliation queue or retry.
 
 ## Target structured telemetry
 

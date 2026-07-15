@@ -15,6 +15,7 @@ from switchboard.adapters.models.deterministic import ScriptedModelGateway
 from switchboard.adapters.orchestration.langgraph import LangGraphAgentOrchestrator
 from switchboard.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from switchboard.adapters.schema.jsonschema_validator import Draft202012JsonSchemaValidator
+from switchboard.adapters.system import SystemClock
 from switchboard.adapters.tools.reference import (
     SearchWorkItemsAdapter,
     search_work_items_manifest,
@@ -26,6 +27,7 @@ from switchboard.application.errors import (
     ToolDispatchError,
     TurnLifecycleConflictError,
 )
+from switchboard.application.ports.clock import Clock
 from switchboard.application.ports.model_gateway import CallTool, Respond
 from switchboard.application.ports.tool_adapter import (
     ToolInvocationRequest,
@@ -118,6 +120,7 @@ def run_turn(
     gateway: ScriptedModelGateway,
     resolver: StaticToolAdapterResolver,
     message_id_factory: Callable[[], MessageId] | None = None,
+    clock: Clock | None = None,
 ) -> RunTurn:
     return RunTurn(
         unit_of_work_factory=factory,
@@ -125,7 +128,7 @@ def run_turn(
         orchestrator=LangGraphAgentOrchestrator(model_gateway=gateway),
         adapter_resolver=resolver,
         schema_validator=Draft202012JsonSchemaValidator(),
-        clock=FixedClock(),
+        clock=clock or FixedClock(),
         invocation_ids=Generator(lambda: ToolInvocationId(uuid4())),
         policy_evaluation_ids=Generator(lambda: PolicyEvaluationId(uuid4())),
         approval_ids=Generator(lambda: ApprovalRequestId(uuid4())),
@@ -761,6 +764,7 @@ async def test_api_created_tool_turn_replays_sse_and_exposes_final_history(
             resolver=StaticToolAdapterResolver(
                 {version.manifest.adapter_key: SearchWorkItemsAdapter()}
             ),
+            clock=SystemClock(),
         ).execute(
             RunTurnCommand(
                 team_id=team_id,

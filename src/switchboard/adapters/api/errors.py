@@ -30,6 +30,8 @@ from switchboard.application.errors import (
     PaginationValidationError,
     TurnNotFoundError,
     TurnTeamMismatchError,
+    WorkflowPlanApprovalConflictError,
+    WorkflowPlanApprovalNotFoundError,
 )
 from switchboard.domain.errors import DomainValidationError
 
@@ -108,6 +110,7 @@ async def _handle_application_error(_: Request, error: Exception) -> JSONRespons
             ApprovalDecisionConflictError,
             ApprovalLifecycleConflictError,
             ApprovalRevalidationError,
+            WorkflowPlanApprovalConflictError,
         ),
     ):
         return _error_response(
@@ -123,6 +126,7 @@ async def _handle_application_error(_: Request, error: Exception) -> JSONRespons
             AgentVersionNotFoundError,
             ApprovalNotFoundError,
             ApprovalTeamMismatchError,
+            WorkflowPlanApprovalNotFoundError,
             ConversationNotFoundError,
             ConversationTeamMismatchError,
             TurnNotFoundError,

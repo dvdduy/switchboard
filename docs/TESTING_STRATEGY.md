@@ -139,6 +139,27 @@ The repository should provide a deterministic local mode so contributors can run
 - deterministic fake model and embedding ports;
 - controllable tools: read-only, mutating, slow/flaky, unauthorized, malicious-output, and reconcilable unknown-outcome tool.
 
+## Day 9 durable-workflow evidence
+
+The Day 9 suite proves more than a happy-path sequence:
+
+- domain and PostgreSQL constraints reject invalid order, predecessor ownership,
+  duplicate targets, excess mutations, and frozen-plan changes;
+- adapter counters prove discovery and completed mutations are not repeated
+  across recreated runners;
+- concurrent planning, approval, resume, claim, and finalization tests select
+  one logical winner;
+- failure-matrix tests distinguish known failure, pre-dispatch ineligibility,
+  timeout/exception/invalid-output uncertainty, and explicit interrupted-running
+  recovery;
+- API/SSE tests preserve Day 8 approval behavior while proving workflow target
+  fields and events are additive and value-free;
+- migration tests upgrade from base through workflow, plan-approval, unknown
+  outcome, and event-kind revisions.
+
+The suite does not claim exactly-once external effects, automatic worker
+recovery, or reconciled unknown outcomes.
+
 ## Definition of done for a feature
 
 A feature is not done until:

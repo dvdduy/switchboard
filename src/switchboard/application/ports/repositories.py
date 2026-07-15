@@ -29,6 +29,9 @@ from switchboard.domain.identifiers import (
     ToolVersionId,
     TurnAttemptId,
     TurnId,
+    TurnWorkflowId,
+    WorkflowPlanApprovalId,
+    WorkflowStepId,
 )
 from switchboard.domain.tool_invocations import ToolInvocation
 from switchboard.domain.tools import (
@@ -42,6 +45,8 @@ from switchboard.domain.tools import (
     ToolVersionState,
 )
 from switchboard.domain.turns import Turn, TurnAttempt
+from switchboard.domain.workflow_approvals import WorkflowPlanApproval
+from switchboard.domain.workflows import TurnWorkflow, WorkflowStep
 
 
 class AgentRepository(Protocol):
@@ -195,6 +200,9 @@ class TurnRepository(Protocol):
     ) -> Turn | None:
         """Return a turn when it exists."""
 
+    async def get_for_update(self, turn_id: TurnId) -> Turn | None:
+        """Lock and return a turn for a short execution-authority transaction."""
+
     async def update_turn_lifecycle(
         self,
         *,
@@ -270,6 +278,80 @@ class ToolInvocationRepository(Protocol):
         updated: ToolInvocation,
     ) -> None:
         """Persist a focused invocation lifecycle compare-and-set update."""
+
+
+class WorkflowRepository(Protocol):
+    """Persistence operations for durable workflow progress."""
+
+    async def add(self, workflow: TurnWorkflow) -> None:
+        """Persist one workflow before its discovery action."""
+
+    async def get(self, workflow_id: TurnWorkflowId) -> TurnWorkflow | None:
+        """Return one workflow by identity."""
+
+    async def get_for_turn(self, turn_id: TurnId) -> TurnWorkflow | None:
+        """Return the one Day 9 workflow owned by a turn."""
+
+    async def get_for_turn_for_update(self, turn_id: TurnId) -> TurnWorkflow | None:
+        """Lock and return a turn's workflow when it exists."""
+
+    async def update_lifecycle(
+        self,
+        *,
+        previous: TurnWorkflow,
+        updated: TurnWorkflow,
+    ) -> None:
+        """Persist focused workflow lifecycle state with compare-and-set."""
+
+    async def add_step(self, step: WorkflowStep) -> None:
+        """Persist a typed step while its workflow plan is still extensible."""
+
+    async def get_step(self, step_id: WorkflowStepId) -> WorkflowStep | None:
+        """Return one workflow step by identity."""
+
+    async def list_steps(self, workflow_id: TurnWorkflowId) -> tuple[WorkflowStep, ...]:
+        """Return workflow steps in positive plan order."""
+
+    async def update_step_lifecycle(
+        self,
+        *,
+        previous: WorkflowStep,
+        updated: WorkflowStep,
+    ) -> None:
+        """Persist focused step lifecycle state with compare-and-set."""
+
+
+class WorkflowPlanApprovalRepository(Protocol):
+    """Persistence operations for exact frozen-plan approvals."""
+
+    async def add(self, approval: WorkflowPlanApproval) -> None:
+        """Persist one pending approval for a frozen workflow plan."""
+
+    async def get(
+        self,
+        approval_id: WorkflowPlanApprovalId,
+    ) -> WorkflowPlanApproval | None:
+        """Return one workflow-plan approval by identity."""
+
+    async def get_for_workflow(
+        self,
+        workflow_id: TurnWorkflowId,
+    ) -> WorkflowPlanApproval | None:
+        """Return the one plan approval owned by a workflow."""
+
+    async def get_for_update(
+        self,
+        approval_id: WorkflowPlanApprovalId,
+    ) -> WorkflowPlanApproval | None:
+        """Lock and return one plan approval for a short decision transaction."""
+
+    async def update_lifecycle(
+        self,
+        *,
+        previous: WorkflowPlanApproval,
+        updated: WorkflowPlanApproval,
+    ) -> None:
+        """Persist a focused plan-approval lifecycle compare-and-set update."""
 
 
 class ApprovalRepository(Protocol):

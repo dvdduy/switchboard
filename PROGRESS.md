@@ -4,8 +4,8 @@
 
 - **Current phase:** Phase 1 — Conversation Platform Foundations
 - **Current milestone:** Milestone 1 — Conversation platform
-- **Completed through:** Day 8
-- **Next session:** Day 9 — Durable multi-tool orchestration
+- **Completed through:** Day 9
+- **Next session:** Day 10 — Phase 1 integration and checkpoint
 
 ## Progress log
 
@@ -20,6 +20,7 @@
 | 6 | Complete | Public API contracts require durable acceptance, boundary idempotency, stable errors, and ownership-safe reads | Versioned create/continue commands, command receipts, ordered history, turn inspection, team-aware SSE, strict DTOs and OpenAPI | Ruff, mypy, 284 tests, PostgreSQL contract/concurrency coverage, migration round-trip, container build | Pending approval: `feat(api): add versioned conversation commands and history` | Explain why `202` means durable acceptance rather than execution, how database receipt uniqueness handles retries, and why external-client contracts do not expose persistence models | No production auth, rate limits/quotas, automatic outbox dispatch, durable worker claiming/recovery, or receipt/history retention policy |
 | 7 | Complete | Orchestration frameworks coordinate bounded steps but do not own durable platform truth | Provider-independent model/orchestration ports, isolated bounded LangGraph direct/one-tool loop, durable invocation lifecycle, locked read-only dispatch, explicit `RunTurn`, safe tool events | Ruff, mypy, 338 tests, PostgreSQL lifecycle/concurrency/E2E coverage, migration round-trip, container build | Pending approval: `feat(orchestration): add bounded LangGraph read-only agent loop` | Explain framework isolation, the `RUNNING` linearization point, stable logical invocation identity, short transactions, and safe partial failure | Explicit runner, fake provider, one read-only tool call, no semantic router, production identity/health, outbox recovery/retries, or retention policy |
 | 8 | Complete | Authorization, policy, confirmation, and execution are distinct durable facts; approval binds an exact action fingerprint | Pure policy matrix, immutable evaluation audit, expiring fingerprint-bound approval, awaiting/cancelled lifecycle, safe approval API, idempotent decisions, atomic resume | Ruff, mypy, 406 tests, PostgreSQL migration/concurrency/security/API/E2E coverage, migration round-trip, container build | Pending approval: `feat(policy): add durable confirmation gate for mutations` | Explain why the model proposes but cannot authorize, how PostgreSQL selects one decision/resume winner, and where the post-dispatch guarantee ends | Development identity/scopes, explicit runner, one tool call, in-memory mutation adapter, no outbox recovery, elevated approval, external-effect execution, or unknown-outcome reconciliation |
+| 9 | Complete | Durable orchestration is persisted business progress, not a live coroutine; safe resume and exactly-once external effects are different guarantees | PostgreSQL-owned sequential workflow/steps, committed discovery, frozen exact-plan approval, recreated-runner resume, explicit unknown outcomes, safe workflow events, and multi-turn inspection | Ruff, strict mypy, 458 tests; migration, concurrency, restart, failure-matrix, API/SSE/E2E coverage; container gate unavailable because Docker CLI is absent | Pending approval: `feat(workflows): add durable multi-tool pause and resume` | Explain workflow versus attempt/invocation state, two-phase plan freeze, exact-plan approval, committed restart boundaries, and why unknown effects block retry | Explicit runner; no outbox/claim lease, public workflow runner, generalized plan-decision receipts, reconciliation, parallel DAG, compensation, or in-place replanning |
 
 ## Milestones
 
@@ -126,6 +127,16 @@
   commit `RUNNING` plus `tool.started` before adapter dispatch.
 - Use actor-bound approval command receipts and approval-row locking/CAS as the
   decision and duplicate-resume concurrency authority.
+- Persist bounded sequential workflow and step progress in PostgreSQL rather
+  than treating a LangGraph checkpoint or live coroutine as business truth.
+- Commit discovery intent before search, then atomically freeze the exact
+  mutation invocations, action evidence, plan fingerprint, and plan approval
+  derived from the committed result.
+- Reconstruct the next safe workflow action from immutable terminal evidence;
+  use locks/CAS for one logical claim winner and never hold a transaction across
+  an adapter call.
+- Treat ambiguous post-dispatch mutation results as durable `UNKNOWN` evidence,
+  stop later mutations, require review, and do not claim exactly-once effects.
 
 ## Known debt
 
@@ -160,7 +171,14 @@
 - Elevated/admin approval, external-side-effect execution, approval
   notifications/batching/retention, and sensitivity-aware summaries are deferred.
 - The graph permits only zero or one tool call and has no semantic router,
-  dynamic replanning, parallel branches, or durable framework checkpoints.
+  while the separate Day 9 platform workflow supports a bounded sequential
+  discovery-plus-mutation path. Semantic routing, dynamic replanning, parallel
+  branches, and durable framework checkpoints remain absent.
+- Workflow execution is explicit; there is no public workflow creation/runner
+  API, automatic claim/lease, reconciliation queue, compensation, or in-place
+  replanning.
+- Workflow-plan decisions are lifecycle-idempotent but do not yet have a
+  generalized command receipt preventing cross-approval reuse of one key.
 - Conformance history has no retention policy or production telemetry/duration strategy.
 - Manifest fields do not include credential configuration, but semantic secret
   scanning of arbitrary descriptions or schema annotations is not implemented.

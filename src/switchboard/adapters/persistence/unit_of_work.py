@@ -17,6 +17,8 @@ from switchboard.adapters.persistence.repositories import (
     SqlAlchemyToolInvocationRepository,
     SqlAlchemyToolRegistryRepository,
     SqlAlchemyTurnRepository,
+    SqlAlchemyWorkflowPlanApprovalRepository,
+    SqlAlchemyWorkflowRepository,
 )
 from switchboard.application.ports.repositories import (
     AgentRepository,
@@ -27,6 +29,8 @@ from switchboard.application.ports.repositories import (
     ToolInvocationRepository,
     ToolRegistryRepository,
     TurnRepository,
+    WorkflowPlanApprovalRepository,
+    WorkflowRepository,
 )
 
 
@@ -52,6 +56,10 @@ class SqlAlchemyUnitOfWork:
         self.tools: ToolRegistryRepository = SqlAlchemyToolRegistryRepository(self._session)
         self.tool_invocations: ToolInvocationRepository = SqlAlchemyToolInvocationRepository(
             self._session
+        )
+        self.workflows: WorkflowRepository = SqlAlchemyWorkflowRepository(self._session)
+        self.workflow_plan_approvals: WorkflowPlanApprovalRepository = (
+            SqlAlchemyWorkflowPlanApprovalRepository(self._session)
         )
 
     async def __aenter__(self) -> Self:

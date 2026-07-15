@@ -18,6 +18,10 @@ from switchboard.adapters.persistence.translators import (
     turn_attempt_to_record,
     turn_from_record,
     turn_to_record,
+    turn_workflow_from_record,
+    turn_workflow_to_record,
+    workflow_step_from_record,
+    workflow_step_to_record,
 )
 from switchboard.domain.agents import AgentDefinition, AgentVersion
 from switchboard.domain.context import ContextPolicy, ConversationSummary
@@ -39,14 +43,24 @@ from switchboard.domain.identifiers import (
     ExecutionEventId,
     MessageId,
     TeamId,
+    ToolInvocationId,
     TurnAttemptId,
     TurnId,
+    TurnWorkflowId,
+    WorkflowStepId,
 )
 from switchboard.domain.turns import (
     Turn,
     TurnAttempt,
     TurnAttemptStatus,
     TurnStatus,
+)
+from switchboard.domain.workflows import (
+    TurnWorkflow,
+    WorkflowStatus,
+    WorkflowStep,
+    WorkflowStepKind,
+    WorkflowStepStatus,
 )
 
 
@@ -178,3 +192,33 @@ def test_execution_event_round_trip() -> None:
     assert restored.payload["metadata"] == {
         "indexes": (1, 2),
     }
+
+
+def test_turn_workflow_round_trip() -> None:
+    workflow = TurnWorkflow(
+        id=TurnWorkflowId(uuid4()),
+        turn_id=TurnId(uuid4()),
+        attempt_id=TurnAttemptId(uuid4()),
+        status=WorkflowStatus.DISCOVERY_PENDING,
+        plan_version=1,
+        created_at=datetime(2026, 7, 15, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 15, tzinfo=UTC),
+    )
+
+    assert turn_workflow_from_record(turn_workflow_to_record(workflow)) == workflow
+
+
+def test_workflow_step_round_trip() -> None:
+    step = WorkflowStep(
+        id=WorkflowStepId(uuid4()),
+        workflow_id=TurnWorkflowId(uuid4()),
+        turn_id=TurnId(uuid4()),
+        attempt_id=TurnAttemptId(uuid4()),
+        step_number=1,
+        kind=WorkflowStepKind.DISCOVERY_TOOL,
+        status=WorkflowStepStatus.PENDING,
+        invocation_id=ToolInvocationId(uuid4()),
+        created_at=datetime(2026, 7, 15, tzinfo=UTC),
+    )
+
+    assert workflow_step_from_record(workflow_step_to_record(step)) == step

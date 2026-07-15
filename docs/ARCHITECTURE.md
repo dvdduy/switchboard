@@ -23,7 +23,7 @@ flowchart LR
 ## Target container view
 
 This diagram includes later outbox, model, tool, evaluation, and rollout
-components. The current Day 8 deployment subset is listed below.
+components. The current Day 9 deployment subset is listed below.
 
 ```mermaid
 flowchart TB
@@ -99,9 +99,10 @@ src/switchboard/
 ## Target runtime turn flow
 
 The following end-to-end outbox, worker, routing, policy, tool, and model flow is
-the target architecture. Through Day 8, durable events/SSE, context, registry,
-conversation acceptance, bounded orchestration, policy, and approval are
-implemented without the target outbox or automatic worker claiming.
+the target architecture. Through Day 9, durable events/SSE, context, registry,
+conversation acceptance, bounded orchestration, policy, approval, and
+PostgreSQL-owned sequential workflows are implemented without the target outbox
+or automatic worker claiming.
 
 ```mermaid
 sequenceDiagram
@@ -145,7 +146,7 @@ Target architecture, not yet implemented: the API transaction will commit:
 3. initial execution event;
 4. outbox record.
 
-The future worker will claim outbox records and advance the state machine. Day 8
+The future worker will claim outbox records and advance the state machine. Day 9
 durably accepts a message, turn, pending attempt, and command receipt, but does
 not yet provide the transactional outbox, durable claiming, or recovery.
 
@@ -165,9 +166,12 @@ Receipt uniqueness serializes duplicate commands; the receipt and accepted
 conversation graph commit in the same unit of work. Identical replay returns
 the original result, while conflicting reuse is rejected.
 
-Approval decisions additionally require a development `X-Actor-ID`. Their
-receipts are scoped to team and approval and fingerprint actor plus decision.
-Safe approval reads expose no argument values or fingerprint digest.
+Approval decisions additionally require a development `X-Actor-ID`. Day 8
+single-invocation decisions have durable command receipts scoped to team and
+approval. Workflow-plan decisions are lifecycle-idempotent but do not yet have a
+generalized cross-approval command-receipt authority. Safe reads identify an
+`invocation` or `workflow_plan` target additively and expose no argument values
+or fingerprint digest.
 
 `202 Accepted` means the message, received turn, pending attempt, and receipt
 are durable. It does not mean execution started. No route launches background
@@ -189,8 +193,11 @@ stateDiagram-v2
     RECEIVED --> CANCELLED
 ```
 
-This is the implemented public lifecycle. Rich routing, clarification,
-unknown-outcome, and recovery states remain target capabilities.
+This is the implemented public turn lifecycle. Day 9 represents uncertain
+post-dispatch mutation outcomes on the invocation, workflow step, and workflow;
+it safely fails the public turn rather than adding a nonterminal public turn
+state. Semantic routing, clarification, automated recovery, and reconciliation
+remain target capabilities.
 
 ## Tool-routing pipeline
 
@@ -216,7 +223,7 @@ The policy engine receives a complete request context and returns one of:
 - `REQUIRE_CONFIRMATION`;
 - `REQUIRE_ELEVATED_APPROVAL`.
 
-The pure Day 8 evaluator allows valid read-only calls, requires confirmation
+The pure `day8-v1` evaluator allows valid read-only calls, requires confirmation
 for valid mutations, and denies external-side-effect and privileged calls.
 Approvals are separate durable records linked to immutable policy evaluations
 and exact invocations. `action-v1` fingerprints team, requester, pinned
@@ -245,8 +252,9 @@ non-negative `Last-Event-ID`; the API treats it as an exclusive cursor, replays
 committed events in order, and then follows newly committed events.
 
 The execution services emit stable `response.delta` chunks rather than exposing
-provider token objects. Day 8 adds `approval.required`, `approval.resolved`, and
-terminal `turn.cancelled` to the safe tool/turn event catalog. Events contain no
+provider token objects. Day 9 adds non-turn-terminal `workflow.planned`,
+`workflow.resumed`, and `workflow.terminal` observations to the approval,
+tool, and turn event catalog. Events contain no
 arguments, results, fingerprint digest, exceptions, prompts, or private
 reasoning. A framework-independent replay service polls PostgreSQL
 with short independent units of work, never sleeps or yields with a transaction
@@ -350,6 +358,54 @@ Automatic dispatch, post-dispatch crash recovery, real model providers,
 semantic selection, elevated approval, and external-side-effect execution are
 deferred.
 
+## Day 9 PostgreSQL-owned sequential workflow
+
+The reference workflow discovers overdue work, deterministically derives up to
+ten due-date mutations from the committed discovery result, freezes the exact
+plan, pauses for one plan-level approval, resumes in a recreated runner, and
+creates one truthful final response. It is a platform workflow, not a serialized
+LangGraph coroutine.
+
+```mermaid
+flowchart LR
+    D["Persist and run discovery"] --> P["Validate and freeze mutation plan"]
+    P --> A["Await exact-plan approval"]
+    A --> R["Recreate runner and resume"]
+    R --> M["Claim one mutation"]
+    M --> T{"Terminal result"}
+    T -->|Succeeded| M
+    T -->|Failed or unknown| F["Skip later mutations"]
+    M -->|No mutation remains| F
+    F --> S["Persist final summary and terminal state"]
+```
+
+`TurnWorkflow` owns a positive plan version, lifecycle, optional frozen
+fingerprint/approval, and terminal output. Ordered `WorkflowStep` records use
+immediate-predecessor links and exact invocation identities. The database
+enforces one workflow per turn, positive unique step and invocation order,
+same-turn/attempt ownership, and frozen executable content. One physical turn
+attempt may now own several logical invocations.
+
+Discovery intent commits before its adapter call. After the result commits, a
+trusted bounded template validates the exact active/bound mutation tool,
+arguments, scopes, policy, duplicate targets, and maximum count. The ordered
+invocations, per-action evidence, `workflow-plan-v1` fingerprint, value-free
+`WorkflowPlanApproval`, pause, and event then commit atomically. Approval never
+authorizes mutation insertion or changed arguments.
+
+Resume recomputes the full frozen authority, consumes approval once, and uses
+short compare-and-set transactions to claim one pending mutation at a time.
+Adapter calls occur outside transactions and receive their preallocated stable
+keys. Completed steps are immutable and skipped by recreated runners. Known
+failure stops later work. Timeout, adapter exception, invalid post-dispatch
+output, or explicit recovery of a persisted `RUNNING` step records `UNKNOWN`,
+stops further dispatch, and terminates the workflow as `REVIEW_REQUIRED`.
+
+This proves deterministic resume at committed boundaries, not exactly-once
+external effects. There is no public workflow creation/runner endpoint,
+automatic worker claim, lease, reconciliation queue, parallel DAG, compensation,
+or in-place replanning.
+
 ## Persistence ownership
 
 - PostgreSQL: source of truth for configuration, conversation, execution, approval, audit, eval, and release state.
@@ -397,7 +453,7 @@ Only when measurement justifies it:
 No microservice split is required merely to demonstrate seniority.
 
 
-## Implementation status after Day 8
+## Implementation status after Day 9
 
 Implemented:
 
@@ -454,11 +510,24 @@ Implemented:
   receipts, awaiting/cancelled lifecycles, and approval events;
 - locked final revalidation and atomic approval consumption/dispatch start with
   tested decision and duplicate-resume concurrency.
+- framework-independent `TurnWorkflow`, ordered `WorkflowStep`, and
+  value-free `WorkflowPlanApproval` aggregates with relational freeze and
+  ownership constraints;
+- durable two-phase discovery/plan creation, bounded deterministic mutation
+  derivation, exact-plan approval, recreated-runner resume, and truthful final
+  summaries;
+- multiple ordered invocations per attempt, explicit `UNKNOWN` invocation/step
+  evidence, stop-on-first-failure, conservative interrupted-dispatch recovery,
+  and terminal replay;
+- additive safe workflow approval DTOs and `workflow.planned`,
+  `workflow.resumed`, and `workflow.terminal` SSE events;
+- migration, concurrency, restart, failure-matrix, redaction, API, SSE, and
+  multi-turn history coverage.
 
 Planned but not yet implemented:
 
 - transactional outbox and worker claiming;
-- durable worker recovery;
+- automatic durable worker claiming and recovery;
 - real model-provider execution;
 - Redis-assisted event notification;
 - event retention and production chunk-size tuning;

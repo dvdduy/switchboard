@@ -20,6 +20,9 @@ classDiagram
     class ToolInvocation
     class PolicyEvaluation
     class ApprovalRequest
+    class TurnWorkflow
+    class WorkflowStep
+    class WorkflowPlanApproval
     class EvalDataset
     class EvalDatasetVersion
     class EvalCase
@@ -46,6 +49,10 @@ classDiagram
     ToolInvocation "1" --> "*" PolicyEvaluation
     TurnExecution "1" --> "*" ApprovalRequest
     PolicyEvaluation "1" --> "0..1" ApprovalRequest
+    TurnExecution "1" --> "0..1" TurnWorkflow
+    TurnWorkflow "1" --> "*" WorkflowStep
+    TurnWorkflow "1" --> "0..1" WorkflowPlanApproval
+    WorkflowStep "0..1" --> "0..1" ToolInvocation
     EvalDataset "1" --> "*" EvalDatasetVersion
     EvalDatasetVersion "1" --> "*" EvalCase
     EvalRun "1" --> "*" EvalResult
@@ -189,7 +196,9 @@ to the physical attempt that emitted it.
 
 **Implemented kinds:** `turn.started`, `response.delta`, `approval.required`,
 `approval.resolved`, `tool.started`, `tool.completed`, `tool.failed`,
-`turn.completed`, `turn.failed`, and terminal `turn.cancelled`. Payloads
+`workflow.planned`, `workflow.resumed`, `workflow.terminal`, `turn.completed`,
+`turn.failed`, and terminal `turn.cancelled`. Workflow events do not terminate
+the public turn stream. Payloads
 are recursively immutable and JSON-compatible. Tool events expose only stable
 invocation/tool identifiers and safe failure codes; no public event contains
 arguments, tool output, prompts, provider exceptions, or private reasoning.
@@ -217,6 +226,48 @@ expiry, decision actor/time, and consumption time.
 versions, effect, environment, policy version, and canonical arguments. Public
 reads/events omit arguments and digest. Rejection/expiry never dispatches.
 
+### TurnWorkflow
+
+Framework-independent durable business progress for the bounded Day 9 workflow.
+It belongs to exactly one turn and attempt and stores lifecycle, positive plan
+version, optional frozen `workflow-plan-v1` fingerprint, optional plan approval,
+and optional terminal assistant message.
+
+**Lifecycle:** `DISCOVERY_PENDING -> DISCOVERY_RUNNING -> PLANNING`, then either
+`AWAITING_CONFIRMATION -> RUNNING -> COMPLETING` or, for an empty mutation plan,
+directly `COMPLETING`. Terminal states are `DISCOVERY_FAILED`, `CANCELLED`,
+`COMPLETED`, `FAILED`, and `REVIEW_REQUIRED`.
+
+**Invariant:** Day 9 permits one workflow per turn. PostgreSQL is authoritative;
+framework checkpoints are derived state. Frozen plan identity and executable
+step content cannot change.
+
+### WorkflowStep
+
+One ordered typed unit inside a `TurnWorkflow`: `DISCOVERY_TOOL`,
+`MUTATION_TOOL`, or `FINAL_RESPONSE`. Tool steps link to exact invocations and
+the final step links to its assistant message. Immediate-predecessor identity
+and number encode the bounded sequential dependency.
+
+**Lifecycle:** `PENDING -> RUNNING -> SUCCEEDED|FAILED|UNKNOWN`, plus
+`PENDING -> SKIPPED` for undispatched later mutations.
+
+**Invariant:** Step numbers are positive and unique per workflow, predecessor
+ownership and adjacency are relationally enforced, and terminal evidence is
+immutable. General DAGs, parallel-ready steps, and post-freeze insertion are
+invalid.
+
+### WorkflowPlanApproval
+
+One value-free confirmation over the exact ordered frozen mutation plan. It
+stores team/requester identity, `workflow-plan-v1` fingerprint, ordered safe
+action summaries, expiry, decision lifecycle, and its workflow target.
+
+**Invariant:** The fingerprint binds workflow/plan identity and the ordered
+per-mutation invocation identities and `action-v1` fingerprints. Public reads
+expose counts, step numbers, effects, tool IDs, and argument field names only;
+they never expose argument values or either digest.
+
 ### PolicyEvaluation
 
 Immutable audit fact recording trusted policy inputs, versioned decision and
@@ -227,25 +278,27 @@ denied external-side-effect and privileged proposals have no invocation.
 ### ToolInvocation
 
 One durable logical invocation owned by an exact turn attempt and exact tool
-version. Day 7 records a positive invocation number, canonical immutable JSON
+version. It records a positive turn-local invocation number, canonical immutable JSON
 arguments, a stable platform-generated idempotency key, the authorized scope
 snapshot, lifecycle timestamps, and either a normalized result or safe failure
 code.
 
 The implemented lifecycle is
-`PENDING → RUNNING → SUCCEEDED|FAILED` for read-only calls and
-`PENDING → AWAITING_CONFIRMATION → RUNNING → SUCCEEDED|FAILED` for approved
+`PENDING → RUNNING → SUCCEEDED|FAILED|UNKNOWN` for read-only calls and
+`PENDING → AWAITING_CONFIRMATION → RUNNING → SUCCEEDED|FAILED|UNKNOWN` for approved
 mutations. Rejection/expiry moves awaiting invocations to `CANCELLED` without
 starting. The exact eligible tool and fingerprint are locked/revalidated before
 approval consumption; consumption, `RUNNING`, resumed turn/attempt state, and
 `tool.started` are atomic. Adapter execution holds no database transaction.
 
-**Invariants:** Day 7 permits at most one invocation per attempt. Composite
+**Invariants:** Day 9 permits multiple invocations per attempt while preserving
+positive unique turn-local ordering. Composite
 foreign keys enforce attempt/turn and tool-version/definition ownership. Stable
 keys are globally unique. Public events contain only stable invocation/tool IDs
 and safe failure codes—never arguments, output, prompts, provider exceptions, or
-private reasoning. Delivery attempts, retries, external operations, and unknown
-outcome recovery are deferred.
+private reasoning. An uncertain post-dispatch result is durable evidence and is
+never blindly retried. Delivery-attempt modeling and outcome reconciliation are
+deferred.
 
 ### EvalDatasetVersion
 
@@ -278,7 +331,7 @@ Release identifies a candidate configuration bundle. Deployment records stage, t
 4. A mutation cannot dispatch without an allowing policy decision and any required approval.
 5. Approval covers an argument fingerprint, not merely a tool name.
 6. A logical invocation owns one stable idempotency key across attempts.
-7. Unknown external outcomes are reconciled before retry.
+7. Unknown external outcomes block retry until future reconciliation.
 8. Critical state is persisted before an externally visible event is acknowledged.
 9. Execution events are append-only.
 10. Eval and release decisions identify their exact input versions.
@@ -289,12 +342,11 @@ Release identifies a candidate configuration bundle. Deployment records stage, t
 
 - Should conversations remain pinned forever or support explicit agent-version migration?
 - How should durable streamed output be chunked to balance write cost and recovery granularity?
-- Is `TurnExecution` one aggregate with all invocations, or should long workflows introduce a separate workflow aggregate?
 - Which reconciliation capabilities are mandatory for external-side-effect tools?
 - How long should approval requests and execution events be retained?
 
 
-## Implementation status after Day 8
+## Implementation status after Day 9
 
 Implemented durable entities:
 
@@ -310,9 +362,12 @@ Conversation
 └── Turn
     ├── TurnAttempt
     ├── ExecutionEvent
-    └── ToolInvocation
+    ├── ToolInvocation
         ├── PolicyEvaluation
         └── ApprovalRequest
+    └── TurnWorkflow
+        ├── WorkflowStep
+        └── WorkflowPlanApproval
 
 Team
 └── ToolDefinition
@@ -389,9 +444,23 @@ Implemented invariants:
   running lifecycle, and `tool.started` before adapter execution;
 - rejection/expiry produces cancelled invocation/attempt/turn state and terminal
   replayable events without adapter execution.
+- one turn owns at most one bounded sequential workflow with positive ordered
+  steps and immediate-predecessor constraints;
+- one attempt may own multiple positive ordered invocations while stable keys
+  and attempt/turn ownership remain enforced;
+- discovery intent commits before execution and a trusted bounded plan freezes
+  before mutation approval or dispatch;
+- plan approval binds the ordered exact mutation fingerprints and exposes only
+  value-free summaries;
+- recreated runners skip terminal steps and persist each mutation result before
+  selecting another;
+- known failure skips later mutations, while uncertain post-dispatch outcomes
+  persist `UNKNOWN` invocation/step evidence and end in `REVIEW_REQUIRED`;
+- safe additive workflow events preserve existing turn-stream terminal rules.
 
-Not implemented yet: transactional outbox dispatch, durable worker claiming and
-recovery, real model-provider execution, Redis event notifications, event
+Not implemented yet: transactional outbox dispatch, automatic durable worker
+claiming/recovery, unknown-outcome reconciliation, real model-provider
+execution, Redis event notifications, event
 retention, production chunk tuning, production token counting, semantic
 summarization, summary retention/chaining, semantic routing decisions,
 production authorization/health filtering, elevated/external-effect approval,

@@ -16,6 +16,9 @@ The current implementation provides:
 - a framework-isolated bounded LangGraph loop with deterministic model actions;
 - durable explicit turn execution through either a direct response or one
   active, bound, scoped tool invocation;
+- PostgreSQL-owned bounded sequential workflows with persisted discovery,
+  frozen exact mutation plans, one plan-level approval, recreated-runner resume,
+  and truthful terminal summaries;
 - a pure policy matrix with durable audit, fingerprint-bound mutating approval,
   expiring confirmation, safe resume, and cancellation;
 - a versioned conversation API with durable idempotent commands, ordered
@@ -153,7 +156,10 @@ curl -X POST \
 ```
 
 Approval responses expose stable identities, lifecycle timestamps, fingerprint
-version, and argument field names only—not argument values or the digest.
+version, and argument field names only—not argument values or the digest. The
+additive `target_type` distinguishes `invocation` from `workflow_plan`; plan
+responses include ordered safe actions and a mutation count without executable
+values.
 
 ## Context management
 
@@ -166,7 +172,8 @@ uses a durable provenance-bearing summary for an omitted older prefix.
 The counter and summarizer boundaries are provider-independent. The included
 summarizer is deterministic and extractive for development and tests; it is not
 a production model tokenizer or semantic-memory system. Context reconstruction
-is consumed by the explicit Day 8 run-turn workflow. It is not exposed as a
+is consumed by the explicit run-turn workflow and by follow-up turns inspecting
+Day 9 workflow summaries. It is not exposed as a
 public endpoint, and the model gateway remains a deterministic structured fake
 rather than a real provider.
 
@@ -206,6 +213,41 @@ Tool failures emit `tool.failed` with a safe code before the turn closes with
 private reasoning. There is intentionally no CLI or HTTP execution command yet;
 automatic claiming and crash recovery require the future transactional outbox.
 
+## Day 9 durable multi-tool walkthrough
+
+The Day 9 reference request is: “Find overdue critical tasks, move them to
+Friday, and summarize the changes.” There is still no public execution endpoint;
+a trusted development runner or test invokes the application workflows:
+
+```text
+RunWorkflowDiscovery
+  persist discovery intent -> tool.started -> search -> tool.completed
+
+FreezeWorkflowMutationPlan
+  validate committed result -> persist exact ordered mutations
+  -> workflow.planned -> approval.required -> durable pause
+
+POST /api/v1/approvals/<plan-approval-id>/decisions
+  approval.resolved; approval makes the plan resumable but does not run it
+
+RunApprovedWorkflow in a recreated runner/UoW
+  workflow.resumed
+  -> tool.started/tool.completed for each next pending mutation
+  -> workflow.terminal -> turn.completed or turn.failed
+```
+
+Each external action has a stable invocation identity and committed intent
+before dispatch. The frozen plan cannot gain, remove, reorder, or rewrite
+mutations after approval. Completed steps are skipped on recreation. A known
+failure stops later mutations; an ambiguous post-dispatch outcome is recorded as
+unknown, produces a review-required workflow summary, and is never blindly
+retried. Rejection or expiry cancels all never-dispatched mutations.
+
+The workflow events expose IDs, lifecycle values, and counts only. They exclude
+search results, mutation arguments, tool output, fingerprints, exceptions,
+prompts, and private reasoning. `workflow.terminal` closes workflow progress but
+does not close SSE; the following terminal turn event closes the stream.
+
 ## Quality gate
 
 ```bash
@@ -225,5 +267,8 @@ dispatch recovery, production authorization and health filtering, and
 conformance retention/telemetry policy.
 Ordinary confirmation does not enable privileged or external-side-effect tools,
 and approval does not make ambiguous external outcomes or blind retries safe.
+Workflow-specific debt includes automatic claiming/leases, generalized durable
+command receipts for plan decisions, unknown-outcome reconciliation, arbitrary
+workflow APIs, parallel DAGs, compensation, and in-place replanning.
 The manifest shape contains no credential configuration, but semantic secret
 scanning of arbitrary description or schema text is also deferred.

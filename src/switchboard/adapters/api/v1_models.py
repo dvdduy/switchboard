@@ -1,6 +1,7 @@
 """Versioned transport models for the public conversation API."""
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from switchboard.domain.conversations import ConversationStatus, MessageRole
 from switchboard.domain.tool_invocations import ToolInvocationStatus
 from switchboard.domain.tools import ToolEffect
 from switchboard.domain.turns import TurnAttemptStatus, TurnStatus
+from switchboard.domain.workflows import WorkflowStatus
 
 MAX_MESSAGE_CONTENT_LENGTH = 32_000
 MessageContent = Annotated[
@@ -111,12 +113,25 @@ class V1ApprovalSafeSummary(V1Model):
     argument_fields: tuple[str, ...]
 
 
+class V1ApprovalTargetType(StrEnum):
+    INVOCATION = "invocation"
+    WORKFLOW_PLAN = "workflow_plan"
+
+
+class V1WorkflowApprovalSafeAction(V1ApprovalSafeSummary):
+    step_number: int
+
+
 class V1ApprovalResponse(V1Model):
     approval_id: UUID
-    invocation_id: UUID
+    invocation_id: UUID | None
+    workflow_id: UUID | None = None
+    target_type: V1ApprovalTargetType = V1ApprovalTargetType.INVOCATION
     requester_actor_id: UUID
     status: ApprovalStatus
-    safe_summary: V1ApprovalSafeSummary
+    safe_summary: V1ApprovalSafeSummary | None
+    safe_actions: tuple[V1WorkflowApprovalSafeAction, ...] = ()
+    mutation_count: int | None = None
     fingerprint_version: str
     created_at: datetime
     expires_at: datetime
@@ -125,7 +140,8 @@ class V1ApprovalResponse(V1Model):
 
 
 class V1ApprovalDecisionResponse(V1ApprovalResponse):
-    invocation_status: ToolInvocationStatus
+    invocation_status: ToolInvocationStatus | None = None
+    workflow_status: WorkflowStatus | None = None
 
 
 class V1ValidationIssue(V1Model):

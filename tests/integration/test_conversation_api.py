@@ -12,7 +12,7 @@ from switchboard.adapters.api.app import create_app
 from switchboard.adapters.api.dependencies import build_conversation_api_services
 from switchboard.adapters.persistence.schema import conversations
 from switchboard.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
-from switchboard.adapters.system import UuidGenerator
+from switchboard.adapters.system import SystemClock, UuidGenerator
 from switchboard.application.services.readiness import ReadinessService
 from switchboard.application.services.replay_turn_events import ReplayTurnEvents
 from switchboard.application.use_cases.simulate_assistant_response import (
@@ -166,7 +166,7 @@ async def test_external_client_can_replay_continue_page_inspect_and_stream(
 
         simulator = SimulateAssistantResponse(
             unit_of_work_factory=unit_of_work_factory,
-            clock=FixedClock(),
+            clock=SystemClock(),
             event_ids=UuidGenerator(ExecutionEventId),
             message_ids=UuidGenerator(MessageId),
         )

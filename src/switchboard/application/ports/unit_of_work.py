@@ -12,6 +12,8 @@ from switchboard.application.ports.repositories import (
     ToolInvocationRepository,
     ToolRegistryRepository,
     TurnRepository,
+    WorkflowPlanApprovalRepository,
+    WorkflowRepository,
 )
 
 
@@ -26,6 +28,8 @@ class UnitOfWork(Protocol):
     turns: TurnRepository
     tools: ToolRegistryRepository
     tool_invocations: ToolInvocationRepository
+    workflows: WorkflowRepository
+    workflow_plan_approvals: WorkflowPlanApprovalRepository
 
     async def __aenter__(self) -> Self:
         """Enter the transactional scope."""

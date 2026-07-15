@@ -161,7 +161,7 @@ async def test_stale_invocation_lifecycle_update_is_rejected(
             )
 
 
-async def test_database_rejects_second_invocation_for_one_attempt(
+async def test_database_allows_multiple_ordered_invocations_for_one_attempt(
     unit_of_work_factory: SqlAlchemyUnitOfWorkFactory,
 ) -> None:
     first = await pending_invocation(unit_of_work_factory)
@@ -169,7 +169,7 @@ async def test_database_rejects_second_invocation_for_one_attempt(
         id=ToolInvocationId(uuid4()),
         turn_id=first.turn_id,
         attempt_id=first.attempt_id,
-        invocation_number=1,
+        invocation_number=2,
         tool_definition_id=first.tool_definition_id,
         tool_version_id=first.tool_version_id,
         arguments={"query": "second"},
@@ -181,8 +181,13 @@ async def test_database_rejects_second_invocation_for_one_attempt(
 
     async with unit_of_work_factory() as unit_of_work:
         await unit_of_work.tool_invocations.add(first)
-        with pytest.raises(IntegrityError):
-            await unit_of_work.tool_invocations.add(second)
+        await unit_of_work.tool_invocations.add(second)
+        await unit_of_work.commit()
+
+    async with unit_of_work_factory() as unit_of_work:
+        stored = await unit_of_work.tool_invocations.list_for_turn(first.turn_id)
+
+    assert stored == (first, second)
 
 
 async def test_database_rejects_attempt_owned_by_another_turn(

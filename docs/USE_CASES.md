@@ -40,7 +40,7 @@ orchestration or routing code. Semantic routing itself is not implemented yet.
 **Primary actor:** End user  
 **Example:** “Which Project Alpha tasks are overdue?”
 
-**Implemented through Day 8:** The client creates a conversation or continuation
+**Implemented through Day 9:** The client creates a conversation or continuation
 through `/api/v1`. Switchboard atomically persists the user message, received
 turn, pending attempt, and idempotency receipt, then returns `202` and a
 reconnectable event URL. A trusted explicit runner builds the pinned bounded
@@ -121,6 +121,16 @@ external outcome; automatic recovery and reconciliation are deferred.
 
 **Example:** “Find overdue critical tasks, move them to Friday, and summarize the changes.”
 
+**Implemented Day 9 subset:** A trusted explicit runner persists and executes
+one read-only discovery invocation, then a deterministic platform validator
+derives at most ten exact ordered mutations from its committed normalized
+result. The entire mutation plan, stable invocation keys, policy evidence,
+`workflow-plan-v1` fingerprint, value-free approval, and pause commit before any
+mutation dispatch. The existing approval API reads and decides the plan safely.
+A recreated runner recomputes authority from PostgreSQL, consumes approval,
+skips completed steps, dispatches one mutation at a time, and persists every
+terminal result before selecting another.
+
 1. Search tool returns candidate tasks.
 2. Agent builds a proposed mutation plan.
 3. Workflow pauses for approval.
@@ -130,6 +140,16 @@ external outcome; automatic recovery and reconciliation are deferred.
 7. Final response summarizes succeeded, failed, and uncertain operations.
 
 **Invariant:** Completed search and approved mutations are not repeated merely because orchestration resumes.
+
+Known failure stops and skips later mutations. Timeout, adapter exception,
+invalid post-dispatch output, or explicit interrupted-run recovery records an
+unknown invocation/step outcome, stops later dispatch, creates a value-free
+review summary, and never blindly retries. Rejection/expiry cancels the frozen
+plan before any mutation dispatch. A follow-up turn can inspect the durable
+assistant summary through ordinary bounded conversation context.
+
+**Deferred:** automatic worker claiming, a public workflow runner, in-place
+replanning, parallel branches, compensation, and unknown-outcome reconciliation.
 
 ---
 

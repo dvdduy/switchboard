@@ -155,6 +155,54 @@ class ToolInvocationLifecycleConflictError(ApplicationError):
     """Raised when an invocation lifecycle changed after it was read."""
 
 
+class WorkflowLifecycleConflictError(ApplicationError):
+    """Raised when a workflow lifecycle changed after it was read."""
+
+
+class WorkflowStepLifecycleConflictError(ApplicationError):
+    """Raised when a workflow step lifecycle changed after it was read."""
+
+
+class WorkflowPlanApprovalLifecycleConflictError(ApplicationError):
+    """Raised when a workflow plan approval lifecycle changed after it was read."""
+
+
+class WorkflowDiscoveryConflictError(ApplicationError):
+    """Raised when a discovery command differs from persisted workflow intent."""
+
+
+class WorkflowDiscoveryInProgressError(ApplicationError):
+    """Raised when another runner already crossed the discovery dispatch boundary."""
+
+
+class WorkflowPlanningConflictError(ApplicationError):
+    """Raised when a workflow is no longer eligible for one plan freeze."""
+
+
+class WorkflowPlanValidationError(ApplicationError):
+    """Raised when committed discovery data cannot form a trusted bounded plan."""
+
+
+class WorkflowPlanApprovalNotFoundError(ApplicationError):
+    """Raised when a workflow-plan approval is unavailable to the requesting team."""
+
+
+class WorkflowPlanApprovalConflictError(ApplicationError):
+    """Raised when a workflow-plan approval cannot accept the requested decision."""
+
+
+class WorkflowExecutionConflictError(ApplicationError):
+    """Raised when persisted workflow state cannot be resumed safely."""
+
+
+class WorkflowExecutionInProgressError(ApplicationError):
+    """Raised when another runner already owns the next dispatch boundary."""
+
+
+class WorkflowToolIneligibleError(ApplicationError):
+    """Raised when a frozen mutation is no longer dispatch-eligible."""
+
+
 class ApprovalLifecycleConflictError(ApplicationError):
     """Raised when an approval lifecycle changed after it was read."""
 

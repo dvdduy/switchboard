@@ -20,7 +20,7 @@ Untrusted / partially trusted:
 - product-provided descriptions and prompts
 
 Trusted enforcement boundary:
-- trusted Day 8 development team/actor context
+- trusted Day 9 development team/actor context
 - policy engine
 - schema validation
 - durable approval records
@@ -30,7 +30,7 @@ Trusted enforcement boundary:
 
 ## Authentication and authorization
 
-Day 8 uses explicit `X-Team-ID` and `X-Actor-ID` UUIDs as trusted development
+Day 9 uses explicit `X-Team-ID` and `X-Actor-ID` UUIDs as trusted development
 fixtures. They are not authentication, membership proof, or delegated authority.
 The domain contract nevertheless models:
 
@@ -98,6 +98,21 @@ updates select one decision/resume winner. Approval consumption, invocation
 start, resumed lifecycle, and `tool.started` commit before adapter dispatch;
 the adapter call holds no transaction.
 
+Day 9 adds one separate `WorkflowPlanApproval` for a frozen ordered mutation
+plan. Its `workflow-plan-v1` fingerprint binds team, requester, agent version,
+workflow and plan version, environment, policy version, and every ordered
+mutation's step number, invocation identity, and exact `action-v1` fingerprint.
+The public contract exposes only counts and value-free safe action summaries.
+Discovery output is untrusted data: a bounded platform template, schema
+validation, exact tool ownership/binding/state, scopes, and policy—not model or
+tool text—determine which mutations may enter the plan. No action may be added
+or changed after freeze or approval.
+
+Workflow approval decisions are stable lifecycle replays, but generalized
+command-receipt enforcement for cross-approval idempotency-key reuse remains
+deferred. This is distinct from the durable Day 8 single-action receipt
+guarantee.
+
 ## Prompt-injection and untrusted output
 
 Tool output and retrieved documents are data, not authority. They cannot:
@@ -108,6 +123,7 @@ Tool output and retrieved documents are data, not authority. They cannot:
 - disable confirmation;
 - alter policy decisions;
 - cause a new tool to become bound.
+- expand, reorder, or rewrite a frozen workflow plan.
 
 Focused tests use malicious-looking argument text to verify these boundaries;
 it affects the fingerprint as data but never grants authority.

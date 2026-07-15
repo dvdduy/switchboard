@@ -47,6 +47,9 @@ from switchboard.domain.identifiers import (
     ToolVersionId,
     TurnAttemptId,
     TurnId,
+    TurnWorkflowId,
+    WorkflowPlanApprovalId,
+    WorkflowStepId,
 )
 from switchboard.domain.json_values import mutable_json_value
 from switchboard.domain.policy import (
@@ -81,6 +84,18 @@ from switchboard.domain.turns import (
     TurnAttempt,
     TurnAttemptStatus,
     TurnStatus,
+)
+from switchboard.domain.workflow_approvals import (
+    WorkflowPlanActionSummary,
+    WorkflowPlanApproval,
+)
+from switchboard.domain.workflows import (
+    TurnWorkflow,
+    WorkflowPlanFingerprint,
+    WorkflowStatus,
+    WorkflowStep,
+    WorkflowStepKind,
+    WorkflowStepStatus,
 )
 
 
@@ -561,6 +576,170 @@ def tool_invocation_from_record(record: Record) -> ToolInvocation:
         completed_at=cast(datetime | None, record["completed_at"]),
         result=None if result is None else cast(Mapping[str, object], result),
         failure_code=cast(str | None, record["failure_code"]),
+    )
+
+
+def turn_workflow_to_record(workflow: TurnWorkflow) -> dict[str, object]:
+    fingerprint = workflow.plan_fingerprint
+    return {
+        "id": workflow.id,
+        "turn_id": workflow.turn_id,
+        "attempt_id": workflow.attempt_id,
+        "status": workflow.status.value,
+        "plan_version": workflow.plan_version,
+        "plan_fingerprint_version": None if fingerprint is None else fingerprint.version,
+        "plan_fingerprint_digest": None if fingerprint is None else fingerprint.digest,
+        "approval_id": workflow.approval_id,
+        "output_message_id": workflow.output_message_id,
+        "created_at": workflow.created_at,
+        "updated_at": workflow.updated_at,
+        "completed_at": workflow.completed_at,
+    }
+
+
+def turn_workflow_from_record(record: Record) -> TurnWorkflow:
+    fingerprint_version = record["plan_fingerprint_version"]
+    fingerprint_digest = record["plan_fingerprint_digest"]
+    approval_id = record["approval_id"]
+    output_message_id = record["output_message_id"]
+    return TurnWorkflow(
+        id=TurnWorkflowId(cast(UUID, record["id"])),
+        turn_id=TurnId(cast(UUID, record["turn_id"])),
+        attempt_id=TurnAttemptId(cast(UUID, record["attempt_id"])),
+        status=WorkflowStatus(cast(str, record["status"])),
+        plan_version=cast(int, record["plan_version"]),
+        plan_fingerprint=(
+            None
+            if fingerprint_version is None or fingerprint_digest is None
+            else WorkflowPlanFingerprint(
+                version=cast(str, fingerprint_version),
+                digest=cast(str, fingerprint_digest),
+            )
+        ),
+        approval_id=(
+            None if approval_id is None else WorkflowPlanApprovalId(cast(UUID, approval_id))
+        ),
+        output_message_id=(
+            None if output_message_id is None else MessageId(cast(UUID, output_message_id))
+        ),
+        created_at=cast(datetime, record["created_at"]),
+        updated_at=cast(datetime, record["updated_at"]),
+        completed_at=cast(datetime | None, record["completed_at"]),
+    )
+
+
+def workflow_step_to_record(step: WorkflowStep) -> dict[str, object]:
+    return {
+        "id": step.id,
+        "workflow_id": step.workflow_id,
+        "turn_id": step.turn_id,
+        "attempt_id": step.attempt_id,
+        "step_number": step.step_number,
+        "kind": step.kind.value,
+        "status": step.status.value,
+        "predecessor_step_id": step.predecessor_step_id,
+        "predecessor_step_number": step.predecessor_step_number,
+        "invocation_id": step.invocation_id,
+        "output_message_id": step.output_message_id,
+        "created_at": step.created_at,
+        "started_at": step.started_at,
+        "completed_at": step.completed_at,
+        "failure_code": step.failure_code,
+    }
+
+
+def workflow_step_from_record(record: Record) -> WorkflowStep:
+    predecessor_step_id = record["predecessor_step_id"]
+    invocation_id = record["invocation_id"]
+    output_message_id = record["output_message_id"]
+    return WorkflowStep(
+        id=WorkflowStepId(cast(UUID, record["id"])),
+        workflow_id=TurnWorkflowId(cast(UUID, record["workflow_id"])),
+        turn_id=TurnId(cast(UUID, record["turn_id"])),
+        attempt_id=TurnAttemptId(cast(UUID, record["attempt_id"])),
+        step_number=cast(int, record["step_number"]),
+        kind=WorkflowStepKind(cast(str, record["kind"])),
+        status=WorkflowStepStatus(cast(str, record["status"])),
+        predecessor_step_id=(
+            None if predecessor_step_id is None else WorkflowStepId(cast(UUID, predecessor_step_id))
+        ),
+        predecessor_step_number=cast(int | None, record["predecessor_step_number"]),
+        invocation_id=(
+            None if invocation_id is None else ToolInvocationId(cast(UUID, invocation_id))
+        ),
+        output_message_id=(
+            None if output_message_id is None else MessageId(cast(UUID, output_message_id))
+        ),
+        created_at=cast(datetime, record["created_at"]),
+        started_at=cast(datetime | None, record["started_at"]),
+        completed_at=cast(datetime | None, record["completed_at"]),
+        failure_code=cast(str | None, record["failure_code"]),
+    )
+
+
+def workflow_plan_approval_to_record(
+    approval: WorkflowPlanApproval,
+) -> dict[str, object]:
+    return {
+        "id": approval.id,
+        "workflow_id": approval.workflow_id,
+        "team_id": approval.team_id,
+        "requester_actor_id": approval.requester_actor_id,
+        "fingerprint_version": approval.fingerprint.version,
+        "fingerprint_digest": approval.fingerprint.digest,
+        "safe_actions": [
+            {
+                "argument_fields": list(summary.action.argument_fields),
+                "effect": summary.action.effect.value,
+                "step_number": summary.step_number,
+                "tool_definition_id": str(summary.action.tool_definition_id),
+                "tool_version_id": str(summary.action.tool_version_id),
+            }
+            for summary in approval.safe_actions
+        ],
+        "status": approval.status.value,
+        "created_at": approval.created_at,
+        "expires_at": approval.expires_at,
+        "resolved_by_actor_id": approval.resolved_by_actor_id,
+        "resolved_at": approval.resolved_at,
+        "consumed_at": approval.consumed_at,
+    }
+
+
+def workflow_plan_approval_from_record(record: Record) -> WorkflowPlanApproval:
+    resolved_actor_id = record["resolved_by_actor_id"]
+    raw_actions = cast(list[dict[str, object]], record["safe_actions"])
+    return WorkflowPlanApproval(
+        id=WorkflowPlanApprovalId(cast(UUID, record["id"])),
+        workflow_id=TurnWorkflowId(cast(UUID, record["workflow_id"])),
+        team_id=TeamId(cast(UUID, record["team_id"])),
+        requester_actor_id=ActorId(cast(UUID, record["requester_actor_id"])),
+        fingerprint=WorkflowPlanFingerprint(
+            version=cast(str, record["fingerprint_version"]),
+            digest=cast(str, record["fingerprint_digest"]),
+        ),
+        safe_actions=tuple(
+            WorkflowPlanActionSummary(
+                step_number=cast(int, action["step_number"]),
+                action=SafeActionSummary(
+                    tool_definition_id=ToolDefinitionId(
+                        UUID(cast(str, action["tool_definition_id"]))
+                    ),
+                    tool_version_id=ToolVersionId(UUID(cast(str, action["tool_version_id"]))),
+                    effect=ToolEffect(cast(str, action["effect"])),
+                    argument_fields=tuple(cast(list[str], action["argument_fields"])),
+                ),
+            )
+            for action in raw_actions
+        ),
+        status=ApprovalStatus(cast(str, record["status"])),
+        created_at=cast(datetime, record["created_at"]),
+        expires_at=cast(datetime, record["expires_at"]),
+        resolved_by_actor_id=(
+            None if resolved_actor_id is None else ActorId(cast(UUID, resolved_actor_id))
+        ),
+        resolved_at=cast(datetime | None, record["resolved_at"]),
+        consumed_at=cast(datetime | None, record["consumed_at"]),
     )
 
 

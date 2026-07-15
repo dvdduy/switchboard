@@ -11,8 +11,13 @@ from switchboard.application.ports.json_schema import JsonSchemaValidator
 from switchboard.application.ports.tool_adapter import ToolAdapterResolver
 from switchboard.application.ports.unit_of_work import UnitOfWorkFactory
 from switchboard.application.services.command_idempotency import hash_idempotency_key
+from switchboard.application.use_cases.approve_workflow_plan import ApproveWorkflowPlan
+from switchboard.application.use_cases.cancel_workflow_plan import CancelWorkflowPlan
 from switchboard.application.use_cases.continue_conversation import ContinueConversation
 from switchboard.application.use_cases.manage_approvals import ManageApprovals
+from switchboard.application.use_cases.manage_workflow_plan_approvals import (
+    ManageWorkflowPlanApprovals,
+)
 from switchboard.application.use_cases.read_conversations import (
     GetConversation,
     GetTurn,
@@ -47,6 +52,7 @@ class ApprovalApiServices:
     """Application services consumed by the v1 approval transport."""
 
     manage: ManageApprovals
+    workflow_plans: ManageWorkflowPlanApprovals | None = None
 
 
 def build_approval_api_services(
@@ -56,6 +62,7 @@ def build_approval_api_services(
     schema_validator: JsonSchemaValidator,
 ) -> ApprovalApiServices:
     clock = SystemClock()
+    event_ids = UuidGenerator(ExecutionEventId)
     return ApprovalApiServices(
         manage=ManageApprovals(
             unit_of_work_factory=unit_of_work_factory,
@@ -63,8 +70,22 @@ def build_approval_api_services(
             schema_validator=schema_validator,
             clock=clock,
             receipt_ids=UuidGenerator(CommandReceiptId),
-            event_ids=UuidGenerator(ExecutionEventId),
-        )
+            event_ids=event_ids,
+        ),
+        workflow_plans=ManageWorkflowPlanApprovals(
+            unit_of_work_factory=unit_of_work_factory,
+            clock=clock,
+            approve=ApproveWorkflowPlan(
+                unit_of_work_factory=unit_of_work_factory,
+                clock=clock,
+                event_ids=event_ids,
+            ),
+            cancel=CancelWorkflowPlan(
+                unit_of_work_factory=unit_of_work_factory,
+                clock=clock,
+                event_ids=event_ids,
+            ),
+        ),
     )
 
 

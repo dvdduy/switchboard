@@ -30,6 +30,9 @@ DEFAULT_TEST_DATABASE_URL = (
 TRUNCATE_DOMAIN_TABLES = text(
     """
     TRUNCATE TABLE
+        workflow_steps,
+        workflow_plan_approvals,
+        turn_workflows,
         approval_requests,
         policy_evaluations,
         tool_invocations,

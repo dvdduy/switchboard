@@ -196,6 +196,10 @@ async def test_safe_read_approve_and_replay_dispatch_exactly_once(
 
     assert read.status_code == 200
     assert read.json()["status"] == ApprovalStatus.PENDING.value
+    assert read.json()["target_type"] == "invocation"
+    assert read.json()["workflow_id"] is None
+    assert read.json()["safe_actions"] == []
+    assert read.json()["mutation_count"] is None
     assert cross_team.status_code == 404
     assert missing_actor.status_code == 400
     public_read = read.text
@@ -205,6 +209,7 @@ async def test_safe_read_approve_and_replay_dispatch_exactly_once(
     assert approved.status_code == 200
     assert approved.json()["status"] == ApprovalStatus.CONSUMED.value
     assert approved.json()["invocation_status"] == ToolInvocationStatus.SUCCEEDED.value
+    assert approved.json()["workflow_status"] is None
     assert replay.json() == approved.json()
     assert conflicting_replay.status_code == 409
     assert adapter.calls == 1

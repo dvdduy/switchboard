@@ -77,6 +77,21 @@ def test_running_invocation_can_fail_with_only_a_safe_code() -> None:
     assert failed.result is None
 
 
+def test_running_invocation_can_preserve_unknown_outcome() -> None:
+    unknown = (
+        pending_invocation()
+        .start(at=NOW)
+        .mark_unknown(
+            at=NOW + timedelta(seconds=1),
+            failure_code="tool_timeout",
+        )
+    )
+
+    assert unknown.status is ToolInvocationStatus.UNKNOWN
+    assert unknown.failure_code == "tool_timeout"
+    assert unknown.result is None
+
+
 def test_pending_invocation_can_pause_and_resume_dispatch() -> None:
     paused = pending_invocation().await_confirmation()
 
@@ -93,10 +108,14 @@ def test_paused_invocation_can_be_cancelled_without_starting() -> None:
     assert cancelled.completed_at == NOW
 
 
+def test_invocation_number_supports_positive_multi_tool_order() -> None:
+    assert replace(pending_invocation(), invocation_number=3).invocation_number == 3
+
+
 @pytest.mark.parametrize(
     ("invalid_invocation", "message"),
     [
-        (lambda: replace(pending_invocation(), invocation_number=2), "exactly one"),
+        (lambda: replace(pending_invocation(), invocation_number=0), "greater than zero"),
         (
             lambda: replace(pending_invocation(), idempotency_key="contains whitespace"),
             "idempotency_key",

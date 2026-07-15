@@ -74,6 +74,12 @@ adapter over exact eligible descriptors and deterministic structured
 `Respond`/`CallTool` actions, without semantic retrieval, calibrated confidence,
 multi-step planning, or persisted pauses.
 
+Day 9 evidences the bounded Phase 1 subset of FR-023: one persisted sequential
+workflow commits discovery intent before execution, freezes the exact derived
+mutation plan before approval, resumes from PostgreSQL in a recreated runner,
+and skips completed steps. Automatic dispatch, general DAGs, dynamic replanning,
+and unknown-outcome reconciliation remain deferred.
+
 ### Policies and safety
 
 | ID | Priority | Requirement | Acceptance signal |

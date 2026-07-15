@@ -2,7 +2,7 @@
 ### A Chat & Agent Platform — Tool Routing, Evaluation, and Shared Infrastructure — reverse-engineered from Asana's Vancouver Chat Platform posting
 
 **Trigger phrase:** `Switchboard, Day N, let's go.`
-**Status:** Active — Day 8 complete; Day 9 planned.
+**Status:** Active — Day 9 complete; Day 10 planned.
 **Track target:** Asana — Senior Software Engineer, Chat Platform (Vancouver)
 
 ---
@@ -166,10 +166,17 @@ Earn: explain why durable confirmation is a platform state machine rather than
 a prompt instruction or in-memory graph pause.
 
 **Day 9 — Multi-tool orchestration**
-Learn: state handling across multi-step tool sequences.
-Build: a conversation spanning multiple tool calls across multiple turns, with state carried correctly.
-Commit: an interrupted multi-tool sequence resumes correctly rather than restarting or corrupting.
-Earn: proof the conversation/tool-call model handles real agent complexity, not just a single-call demo.
+Learn: durable orchestration is persisted business progress, not a long-lived
+coroutine or framework checkpoint; uncertain external outcomes constrain retry.
+Build: a bounded sequential discovery-and-mutation workflow with committed
+intent, frozen exact-plan approval, recreated-runner resume, safe progress
+events, truthful failure/unknown summaries, and follow-up conversation context.
+Commit: an interrupted multi-tool sequence resumes from PostgreSQL without
+repeating completed discovery or mutations, and ambiguous effects are not
+blindly retried.
+Earn: explain the difference between workflow, step, attempt, invocation, and
+delivery state—and why this design proves safe resume without claiming
+exactly-once external effects.
 
 **Day 10 — Phase 1 integration + checkpoint**
 Learn: nothing new — consolidation day.

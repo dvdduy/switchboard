@@ -26,7 +26,10 @@ from switchboard.adapters.persistence.schema import (
     tool_version_states,
     tool_versions,
     turn_attempts,
+    turn_workflows,
     turns,
+    workflow_plan_approvals,
+    workflow_steps,
 )
 from switchboard.adapters.persistence.translators import (
     agent_definition_from_record,
@@ -65,6 +68,12 @@ from switchboard.adapters.persistence.translators import (
     turn_attempt_to_record,
     turn_from_record,
     turn_to_record,
+    turn_workflow_from_record,
+    turn_workflow_to_record,
+    workflow_plan_approval_from_record,
+    workflow_plan_approval_to_record,
+    workflow_step_from_record,
+    workflow_step_to_record,
 )
 from switchboard.application.errors import (
     ApprovalLifecycleConflictError,
@@ -76,6 +85,9 @@ from switchboard.application.errors import (
     TurnEventStateError,
     TurnLifecycleConflictError,
     TurnNotFoundError,
+    WorkflowLifecycleConflictError,
+    WorkflowPlanApprovalLifecycleConflictError,
+    WorkflowStepLifecycleConflictError,
 )
 from switchboard.domain.agents import AgentDefinition, AgentVersion
 from switchboard.domain.approvals import ApprovalRequest, PolicyEvaluationRecord
@@ -102,6 +114,9 @@ from switchboard.domain.identifiers import (
     ToolVersionId,
     TurnAttemptId,
     TurnId,
+    TurnWorkflowId,
+    WorkflowPlanApprovalId,
+    WorkflowStepId,
 )
 from switchboard.domain.json_values import mutable_json_value
 from switchboard.domain.tool_invocations import ToolInvocation
@@ -118,6 +133,13 @@ from switchboard.domain.tools import (
     ToolVersionState,
 )
 from switchboard.domain.turns import Turn, TurnAttempt, TurnStatus
+from switchboard.domain.workflow_approvals import WorkflowPlanApproval
+from switchboard.domain.workflows import (
+    TurnWorkflow,
+    WorkflowStatus,
+    WorkflowStep,
+    WorkflowStepKind,
+)
 
 
 def _matches_nullable(
@@ -494,6 +516,13 @@ class SqlAlchemyTurnRepository:
 
         return turn_from_record(record)
 
+    async def get_for_update(self, turn_id: TurnId) -> Turn | None:
+        result = await self._session.execute(
+            select(turns).where(turns.c.id == turn_id).with_for_update()
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else turn_from_record(record)
+
     async def add_attempt(
         self,
         attempt: TurnAttempt,
@@ -633,12 +662,16 @@ class SqlAlchemyTurnRepository:
                 ExecutionEventKind.TOOL_STARTED,
                 ExecutionEventKind.TOOL_COMPLETED,
                 ExecutionEventKind.TOOL_FAILED,
+                ExecutionEventKind.WORKFLOW_PLANNED,
+                ExecutionEventKind.WORKFLOW_RESUMED,
+                ExecutionEventKind.WORKFLOW_TERMINAL,
                 ExecutionEventKind.RESPONSE_DELTA,
             }
         elif turn.status is TurnStatus.AWAITING_CONFIRMATION:
             allowed_kinds = {
                 ExecutionEventKind.APPROVAL_REQUIRED,
                 ExecutionEventKind.APPROVAL_RESOLVED,
+                ExecutionEventKind.WORKFLOW_TERMINAL,
             }
         elif turn.status is TurnStatus.COMPLETED:
             allowed_kinds = {
@@ -714,7 +747,7 @@ class SqlAlchemyTurnRepository:
 
 
 class SqlAlchemyToolInvocationRepository:
-    """Persists one bounded logical tool invocation per attempt."""
+    """Persists ordered logical tool invocations for a turn attempt."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -793,6 +826,305 @@ class SqlAlchemyToolInvocationRepository:
         if result.scalar_one_or_none() is None:
             raise ToolInvocationLifecycleConflictError(
                 f"tool invocation {previous.id} lifecycle changed after it was read"
+            )
+
+
+class SqlAlchemyWorkflowRepository:
+    """Persists framework-independent workflow and ordered step state."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, workflow: TurnWorkflow) -> None:
+        await self._session.execute(
+            insert(turn_workflows).values(turn_workflow_to_record(workflow))
+        )
+
+    async def get(self, workflow_id: TurnWorkflowId) -> TurnWorkflow | None:
+        result = await self._session.execute(
+            select(turn_workflows).where(turn_workflows.c.id == workflow_id)
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else turn_workflow_from_record(record)
+
+    async def get_for_turn(self, turn_id: TurnId) -> TurnWorkflow | None:
+        result = await self._session.execute(
+            select(turn_workflows).where(turn_workflows.c.turn_id == turn_id)
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else turn_workflow_from_record(record)
+
+    async def get_for_turn_for_update(self, turn_id: TurnId) -> TurnWorkflow | None:
+        result = await self._session.execute(
+            select(turn_workflows).where(turn_workflows.c.turn_id == turn_id).with_for_update()
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else turn_workflow_from_record(record)
+
+    async def update_lifecycle(
+        self,
+        *,
+        previous: TurnWorkflow,
+        updated: TurnWorkflow,
+    ) -> None:
+        previous_immutable = (
+            previous.id,
+            previous.turn_id,
+            previous.attempt_id,
+            previous.plan_version,
+            previous.created_at,
+        )
+        updated_immutable = (
+            updated.id,
+            updated.turn_id,
+            updated.attempt_id,
+            updated.plan_version,
+            updated.created_at,
+        )
+        if previous_immutable != updated_immutable:
+            raise ValueError("workflow lifecycle transition must preserve immutable fields")
+
+        previous_fingerprint = previous.plan_fingerprint
+        updated_fingerprint = updated.plan_fingerprint
+        result = await self._session.execute(
+            update(turn_workflows)
+            .where(
+                turn_workflows.c.id == previous.id,
+                turn_workflows.c.status == previous.status.value,
+                _matches_nullable(
+                    turn_workflows.c.plan_fingerprint_version,
+                    None if previous_fingerprint is None else previous_fingerprint.version,
+                ),
+                _matches_nullable(
+                    turn_workflows.c.plan_fingerprint_digest,
+                    None if previous_fingerprint is None else previous_fingerprint.digest,
+                ),
+                _matches_nullable(turn_workflows.c.approval_id, previous.approval_id),
+                _matches_nullable(
+                    turn_workflows.c.output_message_id,
+                    previous.output_message_id,
+                ),
+                turn_workflows.c.updated_at == previous.updated_at,
+                _matches_nullable(turn_workflows.c.completed_at, previous.completed_at),
+            )
+            .values(
+                status=updated.status.value,
+                plan_fingerprint_version=(
+                    None if updated_fingerprint is None else updated_fingerprint.version
+                ),
+                plan_fingerprint_digest=(
+                    None if updated_fingerprint is None else updated_fingerprint.digest
+                ),
+                approval_id=updated.approval_id,
+                output_message_id=updated.output_message_id,
+                updated_at=updated.updated_at,
+                completed_at=updated.completed_at,
+            )
+            .returning(turn_workflows.c.id)
+        )
+        if result.scalar_one_or_none() is None:
+            raise WorkflowLifecycleConflictError(
+                f"workflow {previous.id} lifecycle changed after it was read"
+            )
+
+    async def add_step(self, step: WorkflowStep) -> None:
+        result = await self._session.execute(
+            select(turn_workflows.c.status)
+            .where(turn_workflows.c.id == step.workflow_id)
+            .with_for_update()
+        )
+        stored_status = result.scalar_one_or_none()
+        if stored_status is None:
+            raise ValueError("workflow does not exist")
+
+        status = WorkflowStatus(stored_status)
+        if step.kind is WorkflowStepKind.DISCOVERY_TOOL:
+            allowed = status is WorkflowStatus.DISCOVERY_PENDING and step.step_number == 1
+        else:
+            allowed = status is WorkflowStatus.PLANNING
+        if not allowed:
+            raise ValueError("workflow plan is not extensible for this step")
+
+        await self._session.execute(insert(workflow_steps).values(workflow_step_to_record(step)))
+
+    async def get_step(self, step_id: WorkflowStepId) -> WorkflowStep | None:
+        result = await self._session.execute(
+            select(workflow_steps).where(workflow_steps.c.id == step_id)
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else workflow_step_from_record(record)
+
+    async def list_steps(self, workflow_id: TurnWorkflowId) -> tuple[WorkflowStep, ...]:
+        result = await self._session.execute(
+            select(workflow_steps)
+            .where(workflow_steps.c.workflow_id == workflow_id)
+            .order_by(workflow_steps.c.step_number)
+        )
+        return tuple(workflow_step_from_record(record) for record in result.mappings())
+
+    async def update_step_lifecycle(
+        self,
+        *,
+        previous: WorkflowStep,
+        updated: WorkflowStep,
+    ) -> None:
+        previous_immutable = (
+            previous.id,
+            previous.workflow_id,
+            previous.turn_id,
+            previous.attempt_id,
+            previous.step_number,
+            previous.kind,
+            previous.predecessor_step_id,
+            previous.predecessor_step_number,
+            previous.invocation_id,
+            previous.created_at,
+        )
+        updated_immutable = (
+            updated.id,
+            updated.workflow_id,
+            updated.turn_id,
+            updated.attempt_id,
+            updated.step_number,
+            updated.kind,
+            updated.predecessor_step_id,
+            updated.predecessor_step_number,
+            updated.invocation_id,
+            updated.created_at,
+        )
+        if previous_immutable != updated_immutable:
+            raise ValueError("workflow step transition must preserve immutable plan fields")
+
+        result = await self._session.execute(
+            update(workflow_steps)
+            .where(
+                workflow_steps.c.id == previous.id,
+                workflow_steps.c.status == previous.status.value,
+                _matches_nullable(workflow_steps.c.started_at, previous.started_at),
+                _matches_nullable(workflow_steps.c.completed_at, previous.completed_at),
+                _matches_nullable(workflow_steps.c.failure_code, previous.failure_code),
+                _matches_nullable(
+                    workflow_steps.c.output_message_id,
+                    previous.output_message_id,
+                ),
+            )
+            .values(
+                status=updated.status.value,
+                output_message_id=updated.output_message_id,
+                started_at=updated.started_at,
+                completed_at=updated.completed_at,
+                failure_code=updated.failure_code,
+            )
+            .returning(workflow_steps.c.id)
+        )
+        if result.scalar_one_or_none() is None:
+            raise WorkflowStepLifecycleConflictError(
+                f"workflow step {previous.id} lifecycle changed after it was read"
+            )
+
+
+class SqlAlchemyWorkflowPlanApprovalRepository:
+    """Persists exact frozen-plan approvals and CAS lifecycle state."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, approval: WorkflowPlanApproval) -> None:
+        await self._session.execute(
+            insert(workflow_plan_approvals).values(workflow_plan_approval_to_record(approval))
+        )
+
+    async def get(
+        self,
+        approval_id: WorkflowPlanApprovalId,
+    ) -> WorkflowPlanApproval | None:
+        result = await self._session.execute(
+            select(workflow_plan_approvals).where(workflow_plan_approvals.c.id == approval_id)
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else workflow_plan_approval_from_record(record)
+
+    async def get_for_workflow(
+        self,
+        workflow_id: TurnWorkflowId,
+    ) -> WorkflowPlanApproval | None:
+        result = await self._session.execute(
+            select(workflow_plan_approvals).where(
+                workflow_plan_approvals.c.workflow_id == workflow_id
+            )
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else workflow_plan_approval_from_record(record)
+
+    async def get_for_update(
+        self,
+        approval_id: WorkflowPlanApprovalId,
+    ) -> WorkflowPlanApproval | None:
+        result = await self._session.execute(
+            select(workflow_plan_approvals)
+            .where(workflow_plan_approvals.c.id == approval_id)
+            .with_for_update()
+        )
+        record = result.mappings().one_or_none()
+        return None if record is None else workflow_plan_approval_from_record(record)
+
+    async def update_lifecycle(
+        self,
+        *,
+        previous: WorkflowPlanApproval,
+        updated: WorkflowPlanApproval,
+    ) -> None:
+        previous_immutable = (
+            previous.id,
+            previous.workflow_id,
+            previous.team_id,
+            previous.requester_actor_id,
+            previous.fingerprint,
+            previous.safe_actions,
+            previous.created_at,
+            previous.expires_at,
+        )
+        updated_immutable = (
+            updated.id,
+            updated.workflow_id,
+            updated.team_id,
+            updated.requester_actor_id,
+            updated.fingerprint,
+            updated.safe_actions,
+            updated.created_at,
+            updated.expires_at,
+        )
+        if previous_immutable != updated_immutable:
+            raise ValueError("workflow approval transition must preserve immutable fields")
+        result = await self._session.execute(
+            update(workflow_plan_approvals)
+            .where(
+                workflow_plan_approvals.c.id == previous.id,
+                workflow_plan_approvals.c.status == previous.status.value,
+                _matches_nullable(
+                    workflow_plan_approvals.c.resolved_by_actor_id,
+                    previous.resolved_by_actor_id,
+                ),
+                _matches_nullable(
+                    workflow_plan_approvals.c.resolved_at,
+                    previous.resolved_at,
+                ),
+                _matches_nullable(
+                    workflow_plan_approvals.c.consumed_at,
+                    previous.consumed_at,
+                ),
+            )
+            .values(
+                status=updated.status.value,
+                resolved_by_actor_id=updated.resolved_by_actor_id,
+                resolved_at=updated.resolved_at,
+                consumed_at=updated.consumed_at,
+            )
+            .returning(workflow_plan_approvals.c.id)
+        )
+        if result.scalar_one_or_none() is None:
+            raise WorkflowPlanApprovalLifecycleConflictError(
+                f"workflow approval {previous.id} lifecycle changed after it was read"
             )
 
 
