@@ -98,6 +98,21 @@ async def test_workflow_approval_api_is_safe_additive_and_history_is_multi_turn(
             sleeper=UnexpectedSleeper(),
         ),
     )
+    schema = app.openapi()
+    approval_paths = schema["paths"]
+    assert {
+        "/api/v1/approvals/{approval_id}",
+        "/api/v1/approvals/{approval_id}/decisions",
+    } <= approval_paths.keys()
+    assert approval_paths["/api/v1/approvals/{approval_id}/decisions"]["post"][
+        "responses"
+    ].keys() >= {"200", "400", "404", "409", "422"}
+    assert {
+        "V1ApprovalDecisionRequest",
+        "V1ApprovalDecisionResponse",
+        "V1ApprovalResponse",
+        "V1WorkflowApprovalSafeAction",
+    } <= schema["components"]["schemas"].keys()
     transport = ASGITransport(app=app)
     headers = {
         "X-Team-ID": str(plan_command.team_id),

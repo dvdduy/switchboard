@@ -23,7 +23,7 @@ flowchart LR
 ## Target container view
 
 This diagram includes later outbox, model, tool, evaluation, and rollout
-components. The current Day 9 deployment subset is listed below.
+components. The current Phase 1 deployment subset is listed below.
 
 ```mermaid
 flowchart TB
@@ -99,7 +99,7 @@ src/switchboard/
 ## Target runtime turn flow
 
 The following end-to-end outbox, worker, routing, policy, tool, and model flow is
-the target architecture. Through Day 9, durable events/SSE, context, registry,
+the target architecture. Through Day 10, durable events/SSE, context, registry,
 conversation acceptance, bounded orchestration, policy, approval, and
 PostgreSQL-owned sequential workflows are implemented without the target outbox
 or automatic worker claiming.
@@ -425,10 +425,15 @@ Current Docker Compose services:
 ```text
 api
 worker
+migrate (one-shot Alembic upgrade to head)
 postgres
 postgres-test (test profile)
 redis
 ```
+
+The runtime image contains the Alembic configuration and migration chain. API
+and worker depend on successful completion of `migrate`, so a clean Compose
+volume cannot advertise the application processes before schema installation.
 
 Planned additions:
 
@@ -453,7 +458,7 @@ Only when measurement justifies it:
 No microservice split is required merely to demonstrate seniority.
 
 
-## Implementation status after Day 9
+## Phase 1 implementation status after Day 10
 
 Implemented:
 
@@ -523,6 +528,9 @@ Implemented:
   `workflow.resumed`, and `workflow.terminal` SSE events;
 - migration, concurrency, restart, failure-matrix, redaction, API, SSE, and
   multi-turn history coverage.
+- guarded deterministic reset/seed, read-only and approval-workflow demos,
+  focused failure/operability verification, and clean-volume Compose startup
+  ordered behind a one-shot migration service.
 
 Planned but not yet implemented:
 
@@ -541,3 +549,7 @@ Planned but not yet implemented:
   conformance retention or production telemetry policy.
 - production authentication/authorization, rate limits, quotas, and opaque
   retention-aware history cursors.
+
+The verified Phase 1 capability boundary, measured local evidence, interview
+walkthroughs, and Phase 2 architectural handoff are collected in
+`docs/PHASE_1_EVIDENCE.md`.

@@ -66,11 +66,29 @@ Audit Days 1–9 against progress/plans, architecture/domain/requirements/use
 cases, migrations/schema, API/OpenAPI, tests, and known debt. Produce blockers,
 fix prerequisites, and reject unrelated scope.
 
+**Status:** Complete. Day 9 is present at `7541c30`, the worktree began clean,
+Ruff, strict mypy, and all 458 tests passed, and `PROGRESS.md` agrees that Day 9
+is complete. Docker was unavailable from PowerShell during the initial audit;
+the later checkpoint-5 smoke passed through WSL Docker. Day 10 is frozen as
+integration and release hardening: no public
+execution endpoint, outbox/worker leasing, new aggregate, or changed `202`/SSE/
+approval contract.
+
 ### Checkpoint 1 — Deterministic demo environment
 
 Add/refine seed/reset commands for team, agent, context policy, active bound
 tools, reference data, fake model, read-only search, idempotent due-date update,
 and clear startup validation. No credentials.
+
+**Status:** Complete. `switchboard-demo-environment validate|reset|seed` checks
+the Alembic head, guards destructive reset to explicit local/test database
+targets, and creates stable team/actor/agent identities plus the fixed context
+policy. Seed runs the existing manifest validation and full conformance suites,
+activates both reference tool versions, and binds their exact versions to the
+final immutable agent version. Complete seed replay is a no-op; partial or
+changed state requires explicit reset. The CLI reports the scripted model mode
+and stable synthetic work-item IDs without introducing provider credentials or
+a public execution path.
 
 ### Checkpoint 2 — Read-only journey
 
@@ -78,12 +96,36 @@ Script/test create conversation, explicit run, bounded context, read-only tool,
 committed events, disconnect/reconnect with `Last-Event-ID`, reconstructed output,
 and ordered history. Collect safe IDs/stage timing.
 
+**Status:** Complete. `switchboard-demo read-only` starts from the deterministic
+seed, creates the turn through the public `/api/v1` contract, and invokes only
+the trusted application-level `RunTurn` execution boundary. The scripted model
+selects the exact active search-tool version, bounded context accounting is
+captured, and durable invocation/result evidence commits before the assistant
+message. The client stops consuming SSE after the first response delta,
+reconnects with the exclusive cursor, proves one contiguous event sequence,
+reconstructs the exact response, and verifies ordered public history plus the
+pinned agent version. Output includes safe IDs and one-sample local stage
+timings without production performance claims. The journey adds no public
+execution endpoint and requires guarded reset/seed before replay.
+
 ### Checkpoint 3 — Approval and multi-tool journey
 
 Continue conversation, persist plan, execute discovery once, pause, dispose
 runner, approve through `/api/v1`, resume with new runner, execute approved
 mutations once, stream final progress, verify history/audit, and prove duplicate
 resume causes no duplicate mutation.
+
+**Status:** Complete. `switchboard-demo approval-workflow` continues the
+read-only conversation through `/api/v1`, explicitly claims the accepted turn
+for the trusted runner, and uses the delivered Day 9 discovery/freeze/resume
+workflows without adding an HTTP execution endpoint. Discovery replay preserves
+one adapter call; the frozen two-mutation plan is exposed through a value-free
+public approval and approved through `/api/v1`. Resume uses a distinct UoW and
+new runner composition, commits two idempotent mutations and the final message,
+and a separately constructed duplicate runner replays terminal evidence with
+zero adapter calls. The journey verifies consumed approval, per-invocation
+policy evidence, stable idempotency keys, safe final SSE progress, and ordered
+four-message history. Local stage timings remain one-sample demo evidence.
 
 ### Checkpoint 4 — Failure and recovery demonstration
 
@@ -93,6 +135,15 @@ change, duplicate command/resume, transaction rollback, and unknown mutation
 outcome stopping without blind retry.
 
 Document automatic versus explicit/manual recovery.
+
+Implemented as the `switchboard-demo-failures` development validation harness.
+Its stable catalog maps all nine requested failure classes to focused executable
+pytest evidence, durable outcomes, and `automatic`, `explicit`, or `manual`
+recovery ownership. `docs/OPERATIONS.md` records the operator rules, including
+that an unknown external mutation outcome requires reconciliation by idempotency
+key and must never be blindly retried. This checkpoint adds no migration, public
+execution endpoint, retry loop, reconciliation queue, or production fault
+injection.
 
 ### Checkpoint 5 — Contract, performance, and operability
 
@@ -104,6 +155,23 @@ Measure local targets such as acceptance latency, time to first committed event,
 replay correctness, and duplicate mutation count. Report environment/sample
 size; do not call this production capacity.
 
+**Status:** Complete. The
+`switchboard-demo-verify` catalog runs 23 focused checks covering public
+OpenAPI/errors (including approvals), base-to-head downgrade/re-upgrade,
+health/readiness, guarded demo controls, redaction, context budgets, bounded
+LangGraph/workflow execution, and the Compose startup contract. The runtime
+image now contains Alembic assets and a one-shot `migrate` service must finish
+before API or worker startup. An optional isolated Compose smoke builds the
+stack, probes live/ready, and removes its dedicated volumes. The clean-volume
+smoke passed through the workstation's WSL Docker daemon: migration completed,
+API/worker startup succeeded, and live/ready reported PostgreSQL and Redis
+available. Both journeys now label environment and sample size, disclaim
+production capacity, and retain structured
+stage timings; the read-only journey adds observed first-committed-event latency,
+while the approval journey reports two logical mutations and zero calls on
+duplicate resume. No schema migration, public contract change, production load
+claim, tracing system, or worker dispatch behavior was added.
+
 ### Checkpoint 6 — Documentation and interview evidence
 
 Update README, architecture status, domain, requirements evidence, use-case
@@ -112,6 +180,14 @@ and Phase 2 handoff.
 
 Prepare a 60-second walkthrough, 5-minute demo, design deep dive, failure story,
 safety story, and quantified evidence table.
+
+**Status:** Complete. Phase 1 status is reconciled across the course, README,
+architecture, domain, requirements, use cases, security, testing, operations,
+and `PROGRESS.md`. `docs/PHASE_1_EVIDENCE.md` records the honest capability
+boundary, one local measured sample, 60-second walkthrough, five-minute demo,
+design deep dive, failure and safety stories, and ordered Phase 2 handoff.
+`PROGRESS.md` marks integration implemented while keeping checkpoint 7 release
+verification, review, commit, and tag explicitly pending.
 
 ### Checkpoint 7 — Release verification and tag
 
@@ -166,17 +242,17 @@ disable, eval/rollout, production load certification, and UI.
 
 ## Definition of done
 
-- [ ] Clean local environment runs documented Phase 1 demo.
-- [ ] Clients use documented `/api/v1`.
-- [ ] Read-only and approval-gated mutation journeys work.
-- [ ] Context is observable and within budget.
-- [ ] SSE reconnect reconstructs output.
-- [ ] Process recreation resumes progress.
-- [ ] Duplicate command/resume causes no duplicate logical mutation.
-- [ ] Failures produce documented safe outcomes.
-- [ ] Static, migration, test, E2E, and container gates pass.
-- [ ] Documentation has no capability inflation.
-- [ ] `PROGRESS.md` marks Phase 1 complete.
+- [x] Clean local environment runs documented Phase 1 demo.
+- [x] Clients use documented `/api/v1`.
+- [x] Read-only and approval-gated mutation journeys work.
+- [x] Context is observable and within budget.
+- [x] SSE reconnect reconstructs output.
+- [x] Process recreation resumes progress.
+- [x] Duplicate command/resume causes no duplicate logical mutation.
+- [x] Failures produce documented safe outcomes.
+- [x] Static, migration, test, E2E, and container gates pass.
+- [x] Documentation has no capability inflation.
+- [x] `PROGRESS.md` marks Phase 1 implementation complete with release pending.
 - [ ] Reviewed commit and `v0.1-platform` tag exist.
 
 ## Suggested commit and tag

@@ -2,7 +2,7 @@
 ### A Chat & Agent Platform — Tool Routing, Evaluation, and Shared Infrastructure — reverse-engineered from Asana's Vancouver Chat Platform posting
 
 **Trigger phrase:** `Switchboard, Day N, let's go.`
-**Status:** Active — Day 9 complete; Day 10 planned.
+**Status:** Active — Day 10 implementation complete; release verification pending.
 **Track target:** Asana — Senior Software Engineer, Chat Platform (Vancouver)
 
 ---
@@ -180,9 +180,11 @@ exactly-once external effects.
 
 **Day 10 — Phase 1 integration + checkpoint**
 Learn: nothing new — consolidation day.
-Build: end-to-end demo: start a conversation, stream a response, call a tool through the confirmation gate, maintain state across turns.
-Commit: tagged `v0.1-platform`.
-Earn: **Checkpoint 1** — rehearsed 60-second platform walkthrough.
+Build: deterministic reset/seed, read-only and approval-workflow demos,
+failure/operability verification, and clean Compose startup.
+Commit: `v0.1-platform` remains pending checkpoint-7 review and approval.
+Earn: **Checkpoint 1** — rehearsed walkthrough, quantified evidence, and an
+honest Phase 2 handoff.
 
 ---
 

@@ -139,9 +139,9 @@ The repository should provide a deterministic local mode so contributors can run
 - deterministic fake model and embedding ports;
 - controllable tools: read-only, mutating, slow/flaky, unauthorized, malicious-output, and reconcilable unknown-outcome tool.
 
-## Day 9 durable-workflow evidence
+## Phase 1 integration evidence
 
-The Day 9 suite proves more than a happy-path sequence:
+The Phase 1 suite proves more than a happy-path sequence:
 
 - domain and PostgreSQL constraints reject invalid order, predecessor ownership,
   duplicate targets, excess mutations, and frozen-plan changes;
@@ -159,6 +159,12 @@ The Day 9 suite proves more than a happy-path sequence:
 
 The suite does not claim exactly-once external effects, automatic worker
 recovery, or reconciled unknown outcomes.
+
+Day 10 adds deterministic reset/seed and two full demo journeys, a 14-case
+failure/recovery matrix, a 23-test contract/operability matrix, local timing
+metadata, approval OpenAPI assertions, and an isolated clean-volume Compose
+smoke. The complete checkpoint-6 suite contains 479 tests and requires no paid
+model credentials.
 
 ## Definition of done for a feature
 

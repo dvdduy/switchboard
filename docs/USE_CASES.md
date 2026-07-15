@@ -40,7 +40,7 @@ orchestration or routing code. Semantic routing itself is not implemented yet.
 **Primary actor:** End user  
 **Example:** “Which Project Alpha tasks are overdue?”
 
-**Implemented through Day 9:** The client creates a conversation or continuation
+**Implemented in Phase 1:** The client creates a conversation or continuation
 through `/api/v1`. Switchboard atomically persists the user message, received
 turn, pending attempt, and idempotency receipt, then returns `202` and a
 reconnectable event URL. A trusted explicit runner builds the pinned bounded
@@ -121,7 +121,7 @@ external outcome; automatic recovery and reconciliation are deferred.
 
 **Example:** “Find overdue critical tasks, move them to Friday, and summarize the changes.”
 
-**Implemented Day 9 subset:** A trusted explicit runner persists and executes
+**Implemented Phase 1 subset:** A trusted explicit runner persists and executes
 one read-only discovery invocation, then a deterministic platform validator
 derives at most ten exact ordered mutations from its committed normalized
 result. The entire mutation plan, stable invocation keys, policy evidence,
@@ -150,6 +150,11 @@ assistant summary through ordinary bounded conversation context.
 
 **Deferred:** automatic worker claiming, a public workflow runner, in-place
 replanning, parallel branches, compensation, and unknown-outcome reconciliation.
+
+Day 10 composes UC-02, UC-04, and UC-05 into deterministic external-client
+demonstrations. It also executes a failure matrix proving that disconnect,
+replay, malformed output, disabled tools, approval changes, rollback, duplicate
+delivery, and unknown mutation outcomes preserve these documented boundaries.
 
 ---
 

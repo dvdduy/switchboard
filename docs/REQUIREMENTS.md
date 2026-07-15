@@ -158,6 +158,22 @@ Day 7 evidence for NFR-009 includes architecture tests that restrict LangGraph
 to its adapter and provider/framework-independent application ports exercised by
 deterministic fakes.
 
+## Phase 1 checkpoint evidence
+
+Day 10 integrates the delivered Phase 1 subsets without claiming the remaining
+P0 roadmap complete. Deterministic external-client demos prove FR-001/FR-002,
+bounded context proves FR-005, exact registry/conformance evidence proves
+FR-010–FR-013, and the approval workflow proves the bounded implemented subset
+of FR-023 and FR-030–FR-045. Migration round-trip, redaction, OpenAPI, health,
+failure, concurrency, and clean Compose smoke evidence support NFR-001–NFR-007,
+NFR-009, and NFR-010 within the documented development boundary.
+
+Still unfulfilled or partial for later phases: complete AgentVersion prompt/model/
+router/policy content (FR-003), production authorization/live health (FR-014),
+semantic routing and confidence (FR-020–FR-022), outbox dispatch (FR-041),
+automatic recovery and reconciliation (FR-043/FR-044), eval/rollout requirements,
+production telemetry/SLOs, and the eval regression portion of NFR-008.
+
 ## Initial performance targets
 
 These are learning-project targets and may be adjusted through benchmarks:
@@ -168,6 +184,12 @@ These are learning-project targets and may be adjusted through benchmarks:
 - No duplicate logical mutation in the crash/retry integration scenario.
 - All committed SSE events recoverable after reconnect.
 - Canary rollback decision within 60 seconds in the local simulation.
+
+The Day 10 deterministic sample measured 37.312 ms API acceptance and an
+observed 29.306 ms upper bound from runner start to the first committed event
+(one local sample, not p95 or production capacity). Replay reconstructed all
+nine events, and duplicate workflow resume made zero mutation calls. See
+`docs/PHASE_1_EVIDENCE.md` for the complete evidence table and caveats.
 
 ## Requirement-change process
 

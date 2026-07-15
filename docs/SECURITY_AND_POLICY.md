@@ -20,7 +20,7 @@ Untrusted / partially trusted:
 - product-provided descriptions and prompts
 
 Trusted enforcement boundary:
-- trusted Day 9 development team/actor context
+- trusted Phase 1 development team/actor context
 - policy engine
 - schema validation
 - durable approval records
@@ -30,7 +30,7 @@ Trusted enforcement boundary:
 
 ## Authentication and authorization
 
-Day 9 uses explicit `X-Team-ID` and `X-Actor-ID` UUIDs as trusted development
+Phase 1 uses explicit `X-Team-ID` and `X-Actor-ID` UUIDs as trusted development
 fixtures. They are not authentication, membership proof, or delegated authority.
 The domain contract nevertheless models:
 
@@ -98,7 +98,7 @@ updates select one decision/resume winner. Approval consumption, invocation
 start, resumed lifecycle, and `tool.started` commit before adapter dispatch;
 the adapter call holds no transaction.
 
-Day 9 adds one separate `WorkflowPlanApproval` for a frozen ordered mutation
+Phase 1 adds one separate `WorkflowPlanApproval` for a frozen ordered mutation
 plan. Its `workflow-plan-v1` fingerprint binds team, requester, agent version,
 workflow and plan version, environment, policy version, and every ordered
 mutation's step number, invocation identity, and exact `action-v1` fingerprint.
@@ -127,6 +127,13 @@ Tool output and retrieved documents are data, not authority. They cannot:
 
 Focused tests use malicious-looking argument text to verify these boundaries;
 it affects the fingerprint as data but never grants authority.
+
+Day 10 rechecks these boundaries through the public demo and failure matrix:
+approval summaries remain value-free, tool events omit arguments and results,
+malformed model actions fail safely, disabled tools never dispatch, changed
+approved arguments cannot resume, and unknown mutation outcomes stop without a
+blind retry. The deterministic environment uses synthetic data and no provider
+credentials.
 
 ## Data handling
 

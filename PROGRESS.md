@@ -2,10 +2,10 @@
 
 ## Status
 
-- **Current phase:** Phase 1 — Conversation Platform Foundations
-- **Current milestone:** Milestone 1 — Conversation platform
-- **Completed through:** Day 9
-- **Next session:** Day 10 — Phase 1 integration and checkpoint
+- **Current phase:** Phase 1 — release verification
+- **Current milestone:** Milestone 1 implementation complete; release pending
+- **Completed through:** Day 10 checkpoint 6
+- **Next session:** Day 10 checkpoint 7 — release verification and tag review
 
 ## Progress log
 
@@ -21,6 +21,8 @@
 | 7 | Complete | Orchestration frameworks coordinate bounded steps but do not own durable platform truth | Provider-independent model/orchestration ports, isolated bounded LangGraph direct/one-tool loop, durable invocation lifecycle, locked read-only dispatch, explicit `RunTurn`, safe tool events | Ruff, mypy, 338 tests, PostgreSQL lifecycle/concurrency/E2E coverage, migration round-trip, container build | Pending approval: `feat(orchestration): add bounded LangGraph read-only agent loop` | Explain framework isolation, the `RUNNING` linearization point, stable logical invocation identity, short transactions, and safe partial failure | Explicit runner, fake provider, one read-only tool call, no semantic router, production identity/health, outbox recovery/retries, or retention policy |
 | 8 | Complete | Authorization, policy, confirmation, and execution are distinct durable facts; approval binds an exact action fingerprint | Pure policy matrix, immutable evaluation audit, expiring fingerprint-bound approval, awaiting/cancelled lifecycle, safe approval API, idempotent decisions, atomic resume | Ruff, mypy, 406 tests, PostgreSQL migration/concurrency/security/API/E2E coverage, migration round-trip, container build | Pending approval: `feat(policy): add durable confirmation gate for mutations` | Explain why the model proposes but cannot authorize, how PostgreSQL selects one decision/resume winner, and where the post-dispatch guarantee ends | Development identity/scopes, explicit runner, one tool call, in-memory mutation adapter, no outbox recovery, elevated approval, external-effect execution, or unknown-outcome reconciliation |
 | 9 | Complete | Durable orchestration is persisted business progress, not a live coroutine; safe resume and exactly-once external effects are different guarantees | PostgreSQL-owned sequential workflow/steps, committed discovery, frozen exact-plan approval, recreated-runner resume, explicit unknown outcomes, safe workflow events, and multi-turn inspection | Ruff, strict mypy, 458 tests; migration, concurrency, restart, failure-matrix, API/SSE/E2E coverage; container gate unavailable because Docker CLI is absent | Pending approval: `feat(workflows): add durable multi-tool pause and resume` | Explain workflow versus attempt/invocation state, two-phase plan freeze, exact-plan approval, committed restart boundaries, and why unknown effects block retry | Explicit runner; no outbox/claim lease, public workflow runner, generalized plan-decision receipts, reconciliation, parallel DAG, compensation, or in-place replanning |
+
+| 10 | Implementation complete; release pending | Integration is evidence: claims must be bounded by executable contracts, failure behavior, and honest local measurements | Guarded demo environment, read-only and approval workflows, failure/verification harnesses, clean Compose migration ordering, interview evidence | Ruff, strict mypy, 479 tests; 14-case failure matrix; 23-test verification matrix; migration round-trip; clean WSL Compose smoke | Pending checkpoint 7 review: `feat(platform): complete Phase 1 conversation platform` | 60-second walkthrough, five-minute demo, design/failure/safety stories, and quantified Phase 1 evidence | Release gate, reviewed commit, and `v0.1-platform` tag remain; Phase 2 owns routing, tracing, outbox recovery, reconciliation, and rollout |
 
 ## Milestones
 
@@ -53,7 +55,7 @@
 - [x] Shared conversation API
 - [x] Orchestration adapter
 - [x] Policy and approval
-- [ ] Phase integration
+- [x] Phase integration
 
 ### Milestone 2 — Routing and reliable execution
 
@@ -145,7 +147,6 @@
 - Accepted conversation commands are not automatically dispatched because no
   transactional outbox or durable worker claiming exists.
 - Command-receipt and public history retention policies are not defined.
-- No transactional outbox exists yet.
 - No durable worker claiming or recovery exists yet.
 - Event observers poll PostgreSQL before a future Redis notification optimization.
 - Orchestrated execution uses a deterministic structured model gateway rather

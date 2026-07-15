@@ -346,7 +346,7 @@ Release identifies a candidate configuration bundle. Deployment records stage, t
 - How long should approval requests and execution events be retained?
 
 
-## Implementation status after Day 9
+## Phase 1 implementation status after Day 10
 
 Implemented durable entities:
 

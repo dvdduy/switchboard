@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: switchboard
       POSTGRES_PASSWORD: switchboard
     ports:
-      - "5432:5432"
+      - "${SWITCHBOARD_POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test:
         - CMD-SHELL
@@ -26,7 +26,7 @@ services:
       POSTGRES_USER: switchboard
       POSTGRES_PASSWORD: switchboard
     ports:
-      - "5433:5432"
+      - "${SWITCHBOARD_POSTGRES_TEST_PORT:-5433}:5432"
     healthcheck:
       test:
         - CMD-SHELL
@@ -38,7 +38,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${SWITCHBOARD_REDIS_PORT:-6379}:6379"
     healthcheck:
       test:
         - CMD
@@ -49,6 +49,24 @@ services:
       retries: 10
     volumes:
       - switchboard-redis-data:/data
+
+  migrate:
+    build:
+      context: .
+    environment:
+      SWITCHBOARD_ENVIRONMENT: local
+      SWITCHBOARD_DATABASE_URL: >-
+        postgresql+psycopg://switchboard:switchboard@postgres:5432/switchboard
+      SWITCHBOARD_REDIS_URL: redis://redis:6379/0
+      SWITCHBOARD_LOG_LEVEL: INFO
+    command:
+      - alembic
+      - upgrade
+      - head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   api:
     build:
@@ -67,10 +85,10 @@ services:
       - --port
       - "8000"
     ports:
-      - "8000:8000"
+      - "${SWITCHBOARD_API_PORT:-8000}:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
@@ -100,8 +118,8 @@ services:
     command:
       - switchboard-worker
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 

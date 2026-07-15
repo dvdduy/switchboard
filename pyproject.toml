@@ -68,4 +68,8 @@ addopts = [
 ]
 
 [project.scripts]
+switchboard-demo = "switchboard.bootstrap.demo:main"
+switchboard-demo-environment = "switchboard.bootstrap.demo_environment:main"
+switchboard-demo-failures = "switchboard.bootstrap.demo_failures:main"
+switchboard-demo-verify = "switchboard.bootstrap.demo_verify:main"
 switchboard-worker = "switchboard.bootstrap.worker:main"

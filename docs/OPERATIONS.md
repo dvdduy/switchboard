@@ -43,7 +43,9 @@ dispatch and recovery require a transactional outbox and worker claiming.
 
 ## Day 9 API, explicit execution, approval, and workflow operations
 
-- Apply migrations with `uv run alembic upgrade head` before starting the API.
+- Apply migrations with `uv run alembic upgrade head` before starting the API
+  directly. Compose runs the same command in its one-shot `migrate` service and
+  blocks API/worker startup on successful completion.
 - Supply `X-Team-ID` on all conversation, turn, history, and event requests.
   This header is development identity only and must be replaced by production
   authentication and authorization.
@@ -63,8 +65,9 @@ dispatch and recovery require a transactional outbox and worker claiming.
   exclusive `after_sequence` cursor.
 - Redis is not required for API command correctness or event replay.
 - Direct/single-tool execution is invoked through application-level `RunTurn`
-  workflow by a trusted development runner/test with team, actor, and granted scopes;
-  there is no public execution endpoint or automatic worker claim.
+  workflow by a trusted development runner/test with team, actor, and granted scopes.
+  Day 10's `switchboard-demo read-only` is one development-only composition of
+  that boundary; there is no public execution endpoint or automatic worker claim.
 - The bounded workflow emits a direct response, one read-only tool lifecycle, or
   an `approval.required` pause for a mutation. External-side-effect and
   privileged tools remain denied.
@@ -79,7 +82,9 @@ dispatch and recovery require a transactional outbox and worker claiming.
 - The Day 9 reference workflow is advanced explicitly through
   `RunWorkflowDiscovery`, `FreezeWorkflowMutationPlan`, and
   `RunApprovedWorkflow`; these are application workflows, not public endpoints
-  or automatic worker jobs.
+  or automatic worker jobs. Day 10's `switchboard-demo approval-workflow`
+  composes them after the read-only demo and recreates the runner/UoW boundary
+  after public approval.
 - `workflow.planned`, `workflow.resumed`, and `workflow.terminal` are safe
   progress observations. Only terminal turn events close SSE replay.
 - A recreated runner resumes from PostgreSQL and skips committed terminal steps.
@@ -87,6 +92,59 @@ dispatch and recovery require a transactional outbox and worker claiming.
   recovery conservatively marks its outcome unknown and stops later dispatch.
 - `REVIEW_REQUIRED` means external outcome reconciliation or human review is
   needed. Day 9 provides durable evidence but no reconciliation queue or retry.
+
+## Failure and recovery evidence
+
+List the deterministic Day 10 failure matrix without changing state:
+
+```powershell
+uv run switchboard-demo-failures --list
+```
+
+Run every focused test named by that matrix:
+
+```powershell
+uv run switchboard-demo-failures
+```
+
+Use `--scenario <key>` one or more times to run a smaller selection. The command
+is a development validation harness: it invokes pytest against the repository and
+requires the development dependency group and the integration-test PostgreSQL
+database. It does not inject failures into a shared or production deployment.
+
+Recovery is classified by who may safely initiate the next action:
+
+- `automatic`: replay or a separate failure-recording transaction is safe and
+  does not repeat an external mutation.
+- `explicit`: the failed attempt stays terminal; a user or operator must create
+  a newly evaluated command, plan, or approval.
+- `manual`: the platform cannot know whether an external mutation happened.
+  Reconcile by the stable idempotency key before any deliberate retry.
+
+Never interpret a client reconnect as cancellation, reset a running mutation to
+pending, reuse an expired approval, or blindly retry an `UNKNOWN` invocation.
+
+## Contract and operability verification
+
+`uv run switchboard-demo-verify` runs the focused OpenAPI/error, migration,
+health/readiness, demo control, redaction, bounded-context/orchestration/workflow,
+and Compose-configuration evidence. Add `--compose` to build and probe a clean
+isolated stack on ports 15432, 16379, and 18000. The smoke command always tears
+down its dedicated `switchboard-day10-smoke` project and volumes. On Windows it
+uses native Docker when available, otherwise Docker in the default WSL
+distribution.
+
+Demo timing output identifies the environment, reports sample size one, and
+sets `production_capacity_claim` to false. The read-only journey measures API
+acceptance, an observed upper bound to the first committed event, each later
+stage, replay correctness, and total elapsed time. The approval workflow also
+reports discovery/mutation call counts and proves duplicate resume performs zero
+mutations. These measurements diagnose the local walkthrough; they are not load,
+SLO, or production-capacity evidence.
+
+The rehearsed commands, measured sample, failure narrative, safety narrative,
+and Phase 2 operational handoff are collected in
+`docs/PHASE_1_EVIDENCE.md`.
 
 ## Target structured telemetry
 

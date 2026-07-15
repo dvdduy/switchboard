@@ -32,6 +32,10 @@ Planned capabilities include:
 - evaluation and regression detection;
 - observability and rollout safety.
 
+See [Phase 1 Evidence and Interview Guide](docs/PHASE_1_EVIDENCE.md) for the
+verified capability boundary, quantified local evidence, demo scripts, failure
+and safety stories, and Phase 2 handoff.
+
 ## Development requirements
 
 - Python 3.13
@@ -68,11 +72,91 @@ Apply database migrations:
 uv run alembic upgrade head
 ```
 
+Prepare the deterministic Phase 1 demo control plane:
+
+```bash
+uv run switchboard-demo-environment validate
+uv run switchboard-demo-environment reset
+uv run switchboard-demo-environment seed
+```
+
+`validate` checks that PostgreSQL is at the current migration head and reports
+whether the fixed demo identities are ready. `seed` creates one bounded-context
+agent version with active, conformant exact bindings to the deterministic search
+and idempotent due-date tools; running it again verifies and reuses the same
+records. A partial or changed seed must be reset explicitly. `reset` truncates
+domain data and refuses to run unless the environment is `local`/`test`, the
+host is local or a Compose PostgreSQL service, and the database is named
+`switchboard` or ends in `_test`. These commands use no provider credentials;
+the model gateway remains the scripted development fake.
+
+From a reset and seeded database, run the deterministic read-only journey:
+
+```bash
+uv run switchboard-demo read-only
+```
+
+The driver creates the conversation through `/api/v1`, invokes the trusted
+application-level turn runner, calls the conformant read-only reference tool,
+stops consuming SSE after the first committed response delta, reconnects with
+`Last-Event-ID`, reconstructs the response without duplicate events, and checks
+the public ordered history and pinned agent version. It prints safe durable IDs,
+bounded-context accounting, and one-sample local stage timings. Those timings
+are demonstration evidence, not production capacity measurements. The journey
+is intentionally single-run; use the guarded reset and seed commands before
+running it again.
+
+After the read-only journey, continue the same conversation through the
+approval-gated multi-tool journey:
+
+```bash
+uv run switchboard-demo approval-workflow
+```
+
+This command accepts the continuation through `/api/v1`, explicitly claims the
+turn for the trusted workflow runner, executes discovery once, freezes two exact
+due-date mutations, reads and approves the value-free plan through `/api/v1`,
+then reconstructs the runner with a new unit-of-work factory before resuming.
+It proves two mutation calls on the first resume and zero on duplicate resume,
+then verifies consumed approval, safe workflow events, durable audit evidence,
+and four ordered conversation messages. The claim and resume remain
+development-only orchestration; this does not add automatic worker dispatch.
+
+List or execute the focused Day 10 failure and recovery evidence:
+
+```bash
+uv run switchboard-demo-failures --list
+uv run switchboard-demo-failures
+```
+
+The development-only harness maps each required failure to its durable outcome,
+recovery owner, and focused pytest node IDs. It requires the development
+dependencies and integration-test PostgreSQL database; it does not inject faults
+into a shared deployment.
+
+Run the consolidated contract and operability evidence:
+
+```bash
+uv run switchboard-demo-verify --list
+uv run switchboard-demo-verify
+uv run switchboard-demo-verify --compose
+```
+
+The optional Compose smoke uses an isolated project and ports, builds a clean
+stack, waits for the migration/API/worker dependencies, probes liveness and
+readiness, and removes its own containers and volumes. Docker is required only
+for that optional gate; on Windows the verifier also detects a Docker daemon
+available through the default WSL distribution.
+
 ## Run the API
 
 ```bash
 docker compose up --build api worker
 ```
+
+Compose runs the one-shot `migrate` service first. API and worker startup is
+blocked until Alembic reaches `head`; migration failure prevents both processes
+from starting.
 
 The public conversation API uses an explicit `X-Team-ID` UUID as development
 identity. This is not production authentication. Create and continue commands
@@ -210,14 +294,17 @@ Reject/expire -> approval.resolved -> turn.cancelled
 
 Tool failures emit `tool.failed` with a safe code before the turn closes with
 `turn.failed`. Tool events never contain arguments, outputs, provider errors, or
-private reasoning. There is intentionally no CLI or HTTP execution command yet;
-automatic claiming and crash recovery require the future transactional outbox.
+private reasoning. The Day 10 `switchboard-demo read-only` command is a trusted,
+development-only composition of this boundary; there is still no public HTTP
+execution command. Automatic claiming and crash recovery require the future
+transactional outbox.
 
 ## Day 9 durable multi-tool walkthrough
 
 The Day 9 reference request is: “Find overdue critical tasks, move them to
 Friday, and summarize the changes.” There is still no public execution endpoint;
-a trusted development runner or test invokes the application workflows:
+a trusted development runner, test, or the Day 10
+`switchboard-demo approval-workflow` composition invokes the application workflows:
 
 ```text
 RunWorkflowDiscovery
